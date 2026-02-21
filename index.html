@@ -5,6 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>IN THE BLACK</title>
 <style>
+  @font-face {
+    font-family: 'Codex';
+    src: url('assets/Codex.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+  }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
     background: #0a0a0a;
@@ -13,7 +19,7 @@
     align-items: center;
     height: 100vh;
     overflow: hidden;
-    font-family: monospace;
+    font-family: 'Codex', monospace;
   }
   canvas {
     image-rendering: pixelated;
@@ -36,7 +42,7 @@
     align-items: center;
     gap: 16px;
     color: #0ff;
-    font-family: monospace;
+    font-family: 'Codex', monospace;
     text-align: center;
   }
   .menu.visible { display: flex; }
@@ -44,7 +50,7 @@
   .menu h2 { font-size: 18px; color: #f0f; text-shadow: 0 0 8px #f0f; }
   .menu p { font-size: 12px; color: #888; max-width: 400px; line-height: 1.6; }
   .menu button {
-    font-family: monospace;
+    font-family: 'Codex', monospace;
     font-size: 16px;
     padding: 10px 30px;
     background: transparent;
@@ -75,6 +81,7 @@
       P2: Up/Down arrows to move &bull; Enter to fire
     </p>
     <button id="btn-start">LAUNCH</button>
+    <p style="color:#444; font-size:10px; margin-top:12px;">Developed &amp; Published by <span style="color:#0af;">anarchygames.org</span></p>
   </div>
   <div id="menu-round" class="menu">
     <h2 id="round-text"></h2>
@@ -140,7 +147,7 @@ function px(x, y, w, h, color) {
 
 function drawText(text, x, y, color, size) {
   ctx.fillStyle = color;
-  ctx.font = `${size * scale}px monospace`;
+  ctx.font = `${size * scale}px Codex, monospace`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, x * scale, y * scale);
