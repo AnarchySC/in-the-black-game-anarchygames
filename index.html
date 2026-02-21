@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SHIELD PONG</title>
+<title>IN THE BLACK</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -66,7 +66,7 @@
 <canvas id="game"></canvas>
 <div id="ui-overlay" class="active">
   <div id="menu-title" class="menu visible">
-    <h1>SHIELD PONG</h1>
+    <h1>IN THE BLACK</h1>
     <h2>// ORBITAL COMBAT //</h2>
     <p>Two ships. One shield. Shoot your opponent while the shield drifts between you.
     Don't let it pass you — or your enemy gets 2 seconds of cover.</p>
@@ -89,7 +89,7 @@
 
 <script>
 // ============================================================
-// SHIELD PONG — V1
+// IN THE BLACK — V1
 // Designed for future WebSocket multiplayer integration.
 // All game state lives in `game` object. Input and state
 // updates are separated for easy network sync.
@@ -420,11 +420,12 @@ function update(dt) {
   if (shield.locked) {
     shield.lockTimer -= dt;
     if (shield.lockTimer <= 0) {
+      // Resume movement — push away from the protected player
+      const wasLockedSide = shield.lockSide;
+      shield.vx = SHIELD_SPEED_X * (wasLockedSide === 0 ? 1 : -1);
+      shield.vy = SHIELD_SPEED_Y * (Math.random() * 2 - 1);
       shield.locked = false;
       shield.lockSide = -1;
-      // Resume movement
-      shield.vx = SHIELD_SPEED_X * (shield.lockSide === 0 ? 1 : -1);
-      shield.vy = SHIELD_SPEED_Y * (Math.random() * 2 - 1);
     } else {
       // Keep shield locked in front of the protected player
       const protectedPlayer = shield.lockSide === 0 ? p1 : p2;
