@@ -107,13 +107,14 @@ const SHIP_GROWTH = 2; // pixels added to height per point
 const BULLET_W = 6;
 const BULLET_H = 3;
 const BULLET_SPEED = 320; // px/sec
-const SHIELD_W = 10;
-const SHIELD_H = 70;
+const SHIELD_RADIUS = 30; // circle shield
+const SHIELD_W = SHIELD_RADIUS * 2; // bounding box for collision
+const SHIELD_H = SHIELD_RADIUS * 2;
 const SHIELD_SPEED_X = 120; // horizontal drift px/sec
 const SHIELD_SPEED_Y = 40; // vertical drift px/sec
 const SHIELD_LOCK_TIME = 2.0; // seconds
 const SHIP_SPEED = 200; // px/sec
-const FIRE_RATE = 2.5; // shots per second (tunable)
+const FIRE_RATE = 3.5; // shots per second (tunable)
 const FIRE_INTERVAL = 1.0 / FIRE_RATE;
 const SHIP_MARGIN = 40; // distance from edge
 const WIN_SCORE = 10;
@@ -271,15 +272,17 @@ function createPlayer(id) {
 function createShield(lockSide) {
   // lockSide: -1 = none, 0 = lock in front of P1, 1 = lock in front of P2
   const s = {
-    x: NATIVE_W / 2 - SHIELD_W / 2,
-    y: NATIVE_H / 2 - SHIELD_H / 2,
-    w: SHIELD_W,
-    h: SHIELD_H,
+    x: NATIVE_W / 2 - SHIELD_RADIUS,
+    y: NATIVE_H / 2 - SHIELD_RADIUS,
+    w: SHIELD_RADIUS * 2,
+    h: SHIELD_RADIUS * 2,
+    r: SHIELD_RADIUS,
     vx: SHIELD_SPEED_X * (Math.random() > 0.5 ? 1 : -1),
     vy: SHIELD_SPEED_Y * (Math.random() * 2 - 1),
     locked: false,
     lockTimer: 0,
     lockSide: -1,
+    colorTime: 0, // color cycle timer
   };
   return s;
 }
@@ -344,6 +347,21 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 // --- Collision ---
 function aabb(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// Circle vs AABB collision (for shield orb vs bullets/ships)
+function circleRect(cx, cy, cr, rx, ry, rw, rh) {
+  const nearX = Math.max(rx, Math.min(cx, rx + rw));
+  const nearY = Math.max(ry, Math.min(cy, ry + rh));
+  const dx = cx - nearX;
+  const dy = cy - nearY;
+  return (dx * dx + dy * dy) <= (cr * cr);
+}
+
+function shieldCollides(shield, rect) {
+  const cx = shield.x + shield.r;
+  const cy = shield.y + shield.r;
+  return circleRect(cx, cy, shield.r, rect.x, rect.y, rect.w, rect.h);
 }
 
 // --- Bullet creation ---
@@ -430,9 +448,9 @@ function update(dt) {
       // Keep shield locked in front of the protected player
       const protectedPlayer = shield.lockSide === 0 ? p1 : p2;
       const targetX = shield.lockSide === 0
-        ? protectedPlayer.x + protectedPlayer.w + 8
-        : protectedPlayer.x - shield.w - 8;
-      const targetY = protectedPlayer.y + protectedPlayer.h / 2 - shield.h / 2;
+        ? protectedPlayer.x + protectedPlayer.w + 8 - shield.r
+        : protectedPlayer.x - shield.r * 2 - 8;
+      const targetY = protectedPlayer.y + protectedPlayer.h / 2 - shield.r;
       // Smoothly follow
       shield.x += (targetX - shield.x) * 8 * dt;
       shield.y += (targetY - shield.y) * 8 * dt;
@@ -446,17 +464,17 @@ function update(dt) {
     if (shield.y + shield.h >= NATIVE_H) { shield.y = NATIVE_H - shield.h; shield.vy = -Math.abs(shield.vy); }
 
     // --- Player-shield friction ---
-    if (aabb(shield, p1)) {
+    if (shieldCollides(shield, p1)) {
       const p1CenterY = p1.y + p1.h / 2;
-      const shieldCenterY = shield.y + shield.h / 2;
+      const shieldCenterY = shield.y + shield.r;
       const diff = shieldCenterY - p1CenterY;
       shield.vy += diff * 0.5; // nudge based on relative position
       shield.vy += p1Move * 30; // player movement transfers to shield
       shield.vx = Math.abs(shield.vx); // push away from P1
     }
-    if (aabb(shield, p2)) {
+    if (shieldCollides(shield, p2)) {
       const p2CenterY = p2.y + p2.h / 2;
-      const shieldCenterY = shield.y + shield.h / 2;
+      const shieldCenterY = shield.y + shield.r;
       const diff = shieldCenterY - p2CenterY;
       shield.vy += diff * 0.5;
       shield.vy += p2Move * 30;
@@ -499,8 +517,8 @@ function update(dt) {
       continue;
     }
 
-    // Bullet vs shield
-    if (aabb(b, shield)) {
+    // Bullet vs shield (circle collision)
+    if (shieldCollides(shield, b)) {
       game.bullets.splice(i, 1);
       // Small shield nudge from bullet impact
       if (!shield.locked) {
@@ -523,6 +541,9 @@ function update(dt) {
       continue;
     }
   }
+
+  // Shield color cycle
+  shield.colorTime += dt;
 
   // Flash timers
   game.flashTimers[0] = Math.max(0, game.flashTimers[0] - dt);
@@ -571,21 +592,56 @@ function draw(dt) {
   if (p1) drawShip(p1.x, p1.y, p1.w, p1.h, true, game.scores[0], game.flashTimers[0] > 0);
   if (p2) drawShip(p2.x, p2.y, p2.w, p2.h, false, game.scores[1], game.flashTimers[1] > 0);
 
-  // Draw shield
+  // Draw shield orb
   if (shield) {
-    const shieldColor = shield.locked ? '#ff0' : '#0f8';
-    const glowColor = shield.locked ? 'rgba(255,255,0,0.15)' : 'rgba(0,255,128,0.1)';
-    // Glow
-    px(shield.x - 2, shield.y - 2, shield.w + 4, shield.h + 4, glowColor);
-    // Body
-    px(shield.x, shield.y, shield.w, shield.h, shieldColor);
-    // Inner line
-    px(shield.x + 3, shield.y + 2, shield.w - 6, shield.h - 4, shield.locked ? '#cc0' : '#0a6');
+    const cx = (shield.x + shield.r) * scale;
+    const cy = (shield.y + shield.r) * scale;
+    const r = shield.r * scale;
+    const t = shield.colorTime || 0;
+
+    // Color cycle — shifts hue over time
+    const hue = shield.locked ? 60 : (t * 40) % 360; // locked = yellow, otherwise cycle
+    const sat = shield.locked ? 90 : 70;
+    const light = shield.locked ? 55 : 45;
+    const alpha = shield.locked ? 0.5 : 0.35;
+
+    // Outer glow
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 6 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha * 0.3})`;
+    ctx.fill();
+
+    // Mid glow
+    ctx.beginPath();
+    ctx.arc(cx, cy, r + 2 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha * 0.5})`;
+    ctx.fill();
+
+    // Main orb
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`;
+    ctx.fill();
+
+    // Inner highlight
+    ctx.beginPath();
+    ctx.arc(cx - r * 0.25, cy - r * 0.25, r * 0.4, 0, Math.PI * 2);
+    ctx.fillStyle = `hsla(${hue}, 30%, 80%, ${alpha * 0.6})`;
+    ctx.fill();
+
+    // Edge ring
+    ctx.beginPath();
+    ctx.arc(cx, cy, r - 1 * scale, 0, Math.PI * 2);
+    ctx.strokeStyle = `hsla(${(hue + 30) % 360}, ${sat}%, ${light + 20}%, ${alpha * 0.8})`;
+    ctx.lineWidth = 1.5 * scale;
+    ctx.stroke();
+    ctx.restore();
 
     // Lock indicator
     if (shield.locked) {
       const lockText = Math.ceil(shield.lockTimer).toString();
-      drawText(lockText, shield.x + shield.w / 2, shield.y - 8, '#ff0', 8);
+      drawText(lockText, shield.x + shield.r, shield.y - 6, '#ff0', 8);
     }
   }
 
