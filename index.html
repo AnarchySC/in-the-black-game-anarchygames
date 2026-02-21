@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SHIELD PONG</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0a0a0a;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: monospace;
+  }
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    border: 2px solid #333;
+  }
+  #ui-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #ui-overlay.active { pointer-events: all; }
+  .menu {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    color: #0ff;
+    font-family: monospace;
+    text-align: center;
+  }
+  .menu.visible { display: flex; }
+  .menu h1 { font-size: 32px; color: #0ff; text-shadow: 0 0 10px #0ff; letter-spacing: 4px; }
+  .menu h2 { font-size: 18px; color: #f0f; text-shadow: 0 0 8px #f0f; }
+  .menu p { font-size: 12px; color: #888; max-width: 400px; line-height: 1.6; }
+  .menu button {
+    font-family: monospace;
+    font-size: 16px;
+    padding: 10px 30px;
+    background: transparent;
+    color: #0f0;
+    border: 2px solid #0f0;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    transition: all 0.2s;
+  }
+  .menu button:hover {
+    background: #0f0;
+    color: #000;
+    box-shadow: 0 0 15px #0f0;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui-overlay" class="active">
+  <div id="menu-title" class="menu visible">
+    <h1>SHIELD PONG</h1>
+    <h2>// ORBITAL COMBAT //</h2>
+    <p>Two ships. One shield. Shoot your opponent while the shield drifts between you.
+    Don't let it pass you — or your enemy gets 2 seconds of cover.</p>
+    <p style="color:#666; font-size:11px;">
+      P1: W/S or Mouse Wheel to move &bull; Click or Space to fire<br>
+      P2: Up/Down arrows to move &bull; Enter to fire
+    </p>
+    <button id="btn-start">LAUNCH</button>
+  </div>
+  <div id="menu-round" class="menu">
+    <h2 id="round-text"></h2>
+    <p id="round-score"></p>
+  </div>
+  <div id="menu-win" class="menu">
+    <h1 id="win-text"></h1>
+    <h2 id="win-ship"></h2>
+    <button id="btn-restart">PLAY AGAIN</button>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// SHIELD PONG — V1
+// Designed for future WebSocket multiplayer integration.
+// All game state lives in `game` object. Input and state
+// updates are separated for easy network sync.
+// ============================================================
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// --- Constants ---
+const NATIVE_W = 640;
+const NATIVE_H = 400;
+const SHIP_BASE_W = 18;
+const SHIP_BASE_H = 28;
+const SHIP_GROWTH = 2; // pixels added to height per point
+const BULLET_W = 6;
+const BULLET_H = 3;
+const BULLET_SPEED = 320; // px/sec
+const SHIELD_W = 10;
+const SHIELD_H = 70;
+const SHIELD_SPEED_X = 120; // horizontal drift px/sec
+const SHIELD_SPEED_Y = 40; // vertical drift px/sec
+const SHIELD_LOCK_TIME = 2.0; // seconds
+const SHIP_SPEED = 200; // px/sec
+const FIRE_RATE = 2.5; // shots per second (tunable)
+const FIRE_INTERVAL = 1.0 / FIRE_RATE;
+const SHIP_MARGIN = 40; // distance from edge
+const WIN_SCORE = 10;
+
+// --- Pixel scaling ---
+let scale = 1;
+function resize() {
+  const maxW = window.innerWidth - 20;
+  const maxH = window.innerHeight - 20;
+  scale = Math.max(1, Math.min(Math.floor(maxW / NATIVE_W), Math.floor(maxH / NATIVE_H)));
+  canvas.width = NATIVE_W * scale;
+  canvas.height = NATIVE_H * scale;
+  ctx.imageSmoothingEnabled = false;
+}
+window.addEventListener('resize', resize);
+resize();
+
+// --- Pixel drawing helpers ---
+function px(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x * scale), Math.round(y * scale), Math.round(w * scale), Math.round(h * scale));
+}
+
+function drawText(text, x, y, color, size) {
+  ctx.fillStyle = color;
+  ctx.font = `${size * scale}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, x * scale, y * scale);
+}
+
+// --- Ship pixel art (drawn procedurally) ---
+// Ship facing right (P1) or left (P2)
+function drawShip(x, y, w, h, facingRight, tier, flash) {
+  const colors = getShipColors(tier);
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+
+  if (flash) {
+    px(x - 2, y - 2, w + 4, h + 4, 'rgba(255,255,255,0.6)');
+    return;
+  }
+
+  // Body
+  px(x + 2, y + 2, w - 4, h - 4, colors.body);
+
+  // Cockpit
+  const cockpitX = facingRight ? x + w - 5 : x + 1;
+  px(cockpitX, cy - 3, 4, 6, colors.cockpit);
+
+  // Wings
+  px(x, y, w * 0.4, 3, colors.wing);
+  px(x, y + h - 3, w * 0.4, 3, colors.wing);
+
+  // Engine glow
+  const engineX = facingRight ? x - 2 : x + w;
+  px(engineX, cy - 2, 3, 4, colors.engine);
+
+  // Tier stripes
+  if (tier > 0) {
+    const stripeCount = Math.min(tier, 5);
+    for (let i = 0; i < stripeCount; i++) {
+      const sy = y + 4 + i * Math.floor((h - 8) / Math.max(stripeCount, 1));
+      px(x + 4, sy, w - 8, 1, colors.stripe);
+    }
+  }
+
+  // Extra details at higher tiers
+  if (tier >= 3) {
+    // Side cannons
+    px(facingRight ? x + w - 2 : x - 1, y - 2, 3, 2, colors.wing);
+    px(facingRight ? x + w - 2 : x - 1, y + h, 3, 2, colors.wing);
+  }
+  if (tier >= 6) {
+    // Shield plating
+    px(x + 1, y + 1, w - 2, 1, colors.stripe);
+    px(x + 1, y + h - 2, w - 2, 1, colors.stripe);
+  }
+  if (tier >= 8) {
+    // Glow aura
+    ctx.globalAlpha = 0.15;
+    px(x - 3, y - 3, w + 6, h + 6, colors.engine);
+    ctx.globalAlpha = 1.0;
+  }
+}
+
+function getShipColors(tier) {
+  const palettes = [
+    { body: '#445', cockpit: '#0af', wing: '#556', engine: '#f80', stripe: '#0af' },         // 0 - starter
+    { body: '#446', cockpit: '#0bf', wing: '#668', engine: '#fa0', stripe: '#0cf' },         // 1
+    { body: '#448', cockpit: '#0cf', wing: '#77a', engine: '#fb0', stripe: '#0ef' },         // 2
+    { body: '#358', cockpit: '#0ff', wing: '#88c', engine: '#fc0', stripe: '#ff0' },         // 3
+    { body: '#36a', cockpit: '#2ff', wing: '#99d', engine: '#fd0', stripe: '#ff2' },         // 4
+    { body: '#46c', cockpit: '#4ff', wing: '#aae', engine: '#fe2', stripe: '#fa0' },         // 5
+    { body: '#f06', cockpit: '#fff', wing: '#f39', engine: '#ff0', stripe: '#0ff' },         // 6
+    { body: '#f0a', cockpit: '#fff', wing: '#f6c', engine: '#ff4', stripe: '#0ff' },         // 7
+    { body: '#c0f', cockpit: '#fff', wing: '#d4f', engine: '#ff8', stripe: '#ff0' },         // 8
+    { body: '#ff0', cockpit: '#fff', wing: '#ffa', engine: '#f0f', stripe: '#0ff' },         // 9 - max, legendary
+  ];
+  return palettes[Math.min(tier, palettes.length - 1)];
+}
+
+// --- Starfield background ---
+const stars = [];
+for (let i = 0; i < 80; i++) {
+  stars.push({
+    x: Math.random() * NATIVE_W,
+    y: Math.random() * NATIVE_H,
+    brightness: Math.random() * 0.5 + 0.2,
+    speed: Math.random() * 10 + 5,
+    size: Math.random() > 0.8 ? 2 : 1
+  });
+}
+
+function drawStarfield(dt) {
+  for (const s of stars) {
+    s.x -= s.speed * dt;
+    if (s.x < 0) { s.x = NATIVE_W; s.y = Math.random() * NATIVE_H; }
+    const b = Math.round(s.brightness * 255);
+    px(s.x, s.y, s.size, s.size, `rgb(${b},${b},${b + 30})`);
+  }
+}
+
+// --- Game state ---
+// Exported as a flat object for easy serialization (multiplayer sync)
+const game = {
+  state: 'menu', // menu, countdown, playing, roundEnd, gameOver
+  countdownTimer: 0,
+
+  p1: null,
+  p2: null,
+  shield: null,
+  bullets: [],
+
+  scores: [0, 0],
+  roundWinner: -1,
+  flashTimers: [0, 0],
+};
+
+function createPlayer(id) {
+  const isP1 = id === 0;
+  const h = SHIP_BASE_H + game.scores[id] * SHIP_GROWTH;
+  return {
+    id,
+    x: isP1 ? SHIP_MARGIN : NATIVE_W - SHIP_MARGIN - SHIP_BASE_W,
+    y: NATIVE_H / 2 - h / 2,
+    w: SHIP_BASE_W,
+    h,
+    vy: 0,
+    fireCooldown: 0,
+    alive: true,
+  };
+}
+
+function createShield(lockSide) {
+  // lockSide: -1 = none, 0 = lock in front of P1, 1 = lock in front of P2
+  const s = {
+    x: NATIVE_W / 2 - SHIELD_W / 2,
+    y: NATIVE_H / 2 - SHIELD_H / 2,
+    w: SHIELD_W,
+    h: SHIELD_H,
+    vx: SHIELD_SPEED_X * (Math.random() > 0.5 ? 1 : -1),
+    vy: SHIELD_SPEED_Y * (Math.random() * 2 - 1),
+    locked: false,
+    lockTimer: 0,
+    lockSide: -1,
+  };
+  return s;
+}
+
+function resetRound() {
+  game.p1 = createPlayer(0);
+  game.p2 = createPlayer(1);
+  game.shield = createShield(-1);
+  game.bullets = [];
+  game.flashTimers = [0, 0];
+  game.state = 'countdown';
+  game.countdownTimer = 2.0;
+}
+
+// --- Input ---
+const input = {
+  p1Up: false, p1Down: false, p1Fire: false, p1FireOnce: false,
+  p2Up: false, p2Down: false, p2Fire: false, p2FireOnce: false,
+  mouseWheelDelta: 0,
+};
+
+// Keyboard
+document.addEventListener('keydown', (e) => {
+  if (e.repeat) return;
+  switch (e.code) {
+    case 'KeyW': input.p1Up = true; break;
+    case 'KeyS': input.p1Down = true; break;
+    case 'Space': e.preventDefault(); input.p1Fire = true; input.p1FireOnce = true; break;
+    case 'ArrowUp': e.preventDefault(); input.p2Up = true; break;
+    case 'ArrowDown': e.preventDefault(); input.p2Down = true; break;
+    case 'Enter': input.p2Fire = true; input.p2FireOnce = true; break;
+  }
+});
+document.addEventListener('keyup', (e) => {
+  switch (e.code) {
+    case 'KeyW': input.p1Up = false; break;
+    case 'KeyS': input.p1Down = false; break;
+    case 'Space': input.p1Fire = false; break;
+    case 'ArrowUp': input.p2Up = false; break;
+    case 'ArrowDown': input.p2Down = false; break;
+    case 'Enter': input.p2Fire = false; break;
+  }
+});
+
+// Mouse wheel — P1 movement
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  input.mouseWheelDelta += e.deltaY;
+}, { passive: false });
+
+// Mouse click — P1 fire
+canvas.addEventListener('mousedown', (e) => {
+  if (e.button === 0) { input.p1Fire = true; input.p1FireOnce = true; }
+});
+canvas.addEventListener('mouseup', (e) => {
+  if (e.button === 0) { input.p1Fire = false; }
+});
+
+// Prevent context menu on canvas
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// --- Collision ---
+function aabb(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+
+// --- Bullet creation ---
+function fireBullet(player) {
+  const isP1 = player.id === 0;
+  const bx = isP1 ? player.x + player.w : player.x - BULLET_W;
+  const by = player.y + player.h / 2 - BULLET_H / 2;
+  game.bullets.push({
+    x: bx,
+    y: by,
+    w: BULLET_W,
+    h: BULLET_H,
+    vx: isP1 ? BULLET_SPEED : -BULLET_SPEED,
+    vy: 0,
+    owner: player.id,
+  });
+}
+
+// --- Update ---
+function update(dt) {
+  if (game.state === 'countdown') {
+    game.countdownTimer -= dt;
+    if (game.countdownTimer <= 0) {
+      game.state = 'playing';
+    }
+    return;
+  }
+
+  if (game.state !== 'playing') return;
+
+  const p1 = game.p1;
+  const p2 = game.p2;
+  const shield = game.shield;
+
+  // --- Player movement ---
+  // P1
+  let p1Move = 0;
+  if (input.p1Up) p1Move -= 1;
+  if (input.p1Down) p1Move += 1;
+  // Mouse wheel input
+  if (Math.abs(input.mouseWheelDelta) > 2) {
+    p1Move += Math.sign(input.mouseWheelDelta) * Math.min(Math.abs(input.mouseWheelDelta) / 30, 1);
+    input.mouseWheelDelta *= 0.7; // decay
+  } else {
+    input.mouseWheelDelta = 0;
+  }
+  p1.y += p1Move * SHIP_SPEED * dt;
+  p1.y = Math.max(0, Math.min(NATIVE_H - p1.h, p1.y));
+
+  // P2
+  let p2Move = 0;
+  if (input.p2Up) p2Move -= 1;
+  if (input.p2Down) p2Move += 1;
+  p2.y += p2Move * SHIP_SPEED * dt;
+  p2.y = Math.max(0, Math.min(NATIVE_H - p2.h, p2.y));
+
+  // --- Firing ---
+  // P1
+  p1.fireCooldown -= dt;
+  if ((input.p1Fire || input.p1FireOnce) && p1.fireCooldown <= 0 && p1.alive) {
+    fireBullet(p1);
+    p1.fireCooldown = FIRE_INTERVAL;
+    input.p1FireOnce = false;
+  }
+  // P2
+  p2.fireCooldown -= dt;
+  if ((input.p2Fire || input.p2FireOnce) && p2.fireCooldown <= 0 && p2.alive) {
+    fireBullet(p2);
+    p2.fireCooldown = FIRE_INTERVAL;
+    input.p2FireOnce = false;
+  }
+
+  // --- Shield update ---
+  if (shield.locked) {
+    shield.lockTimer -= dt;
+    if (shield.lockTimer <= 0) {
+      shield.locked = false;
+      shield.lockSide = -1;
+      // Resume movement
+      shield.vx = SHIELD_SPEED_X * (shield.lockSide === 0 ? 1 : -1);
+      shield.vy = SHIELD_SPEED_Y * (Math.random() * 2 - 1);
+    } else {
+      // Keep shield locked in front of the protected player
+      const protectedPlayer = shield.lockSide === 0 ? p1 : p2;
+      const targetX = shield.lockSide === 0
+        ? protectedPlayer.x + protectedPlayer.w + 8
+        : protectedPlayer.x - shield.w - 8;
+      const targetY = protectedPlayer.y + protectedPlayer.h / 2 - shield.h / 2;
+      // Smoothly follow
+      shield.x += (targetX - shield.x) * 8 * dt;
+      shield.y += (targetY - shield.y) * 8 * dt;
+    }
+  } else {
+    shield.x += shield.vx * dt;
+    shield.y += shield.vy * dt;
+
+    // Vertical bounce
+    if (shield.y <= 0) { shield.y = 0; shield.vy = Math.abs(shield.vy); }
+    if (shield.y + shield.h >= NATIVE_H) { shield.y = NATIVE_H - shield.h; shield.vy = -Math.abs(shield.vy); }
+
+    // --- Player-shield friction ---
+    if (aabb(shield, p1)) {
+      const p1CenterY = p1.y + p1.h / 2;
+      const shieldCenterY = shield.y + shield.h / 2;
+      const diff = shieldCenterY - p1CenterY;
+      shield.vy += diff * 0.5; // nudge based on relative position
+      shield.vy += p1Move * 30; // player movement transfers to shield
+      shield.vx = Math.abs(shield.vx); // push away from P1
+    }
+    if (aabb(shield, p2)) {
+      const p2CenterY = p2.y + p2.h / 2;
+      const shieldCenterY = shield.y + shield.h / 2;
+      const diff = shieldCenterY - p2CenterY;
+      shield.vy += diff * 0.5;
+      shield.vy += p2Move * 30;
+      shield.vx = -Math.abs(shield.vx); // push away from P2
+    }
+
+    // Clamp shield vy
+    shield.vy = Math.max(-150, Math.min(150, shield.vy));
+
+    // --- Shield passes a player → lock ---
+    const p1Edge = p1.x;
+    const p2Edge = p2.x + p2.w;
+
+    if (shield.x + shield.w < p1Edge - 10) {
+      // Shield passed P1 → lock in front of P2 (P2 gets protection)
+      shield.locked = true;
+      shield.lockTimer = SHIELD_LOCK_TIME;
+      shield.lockSide = 1;
+      shield.vx = 0;
+      shield.vy = 0;
+    } else if (shield.x > p2Edge + 10) {
+      // Shield passed P2 → lock in front of P1 (P1 gets protection)
+      shield.locked = true;
+      shield.lockTimer = SHIELD_LOCK_TIME;
+      shield.lockSide = 0;
+      shield.vx = 0;
+      shield.vy = 0;
+    }
+  }
+
+  // --- Bullets update ---
+  for (let i = game.bullets.length - 1; i >= 0; i--) {
+    const b = game.bullets[i];
+    b.x += b.vx * dt;
+    b.y += b.vy * dt;
+
+    // Off screen
+    if (b.x < -20 || b.x > NATIVE_W + 20 || b.y < -20 || b.y > NATIVE_H + 20) {
+      game.bullets.splice(i, 1);
+      continue;
+    }
+
+    // Bullet vs shield
+    if (aabb(b, shield)) {
+      game.bullets.splice(i, 1);
+      // Small shield nudge from bullet impact
+      if (!shield.locked) {
+        shield.vy += (Math.random() - 0.5) * 20;
+      }
+      continue;
+    }
+
+    // Bullet vs players
+    if (b.owner === 0 && aabb(b, p2)) {
+      // P1 hit P2
+      game.bullets.splice(i, 1);
+      handleHit(1);
+      continue;
+    }
+    if (b.owner === 1 && aabb(b, p1)) {
+      // P2 hit P1
+      game.bullets.splice(i, 1);
+      handleHit(0);
+      continue;
+    }
+  }
+
+  // Flash timers
+  game.flashTimers[0] = Math.max(0, game.flashTimers[0] - dt);
+  game.flashTimers[1] = Math.max(0, game.flashTimers[1] - dt);
+}
+
+function handleHit(hitPlayerId) {
+  const scorerId = hitPlayerId === 0 ? 1 : 0;
+  game.scores[scorerId]++;
+  game.flashTimers[hitPlayerId] = 0.3;
+
+  if (game.scores[scorerId] >= WIN_SCORE) {
+    game.state = 'gameOver';
+    game.roundWinner = scorerId;
+    showWinScreen(scorerId);
+  } else {
+    game.state = 'roundEnd';
+    game.roundWinner = scorerId;
+    showRoundScreen(scorerId);
+    setTimeout(() => {
+      if (game.state === 'roundEnd') resetRound();
+    }, 1500);
+  }
+}
+
+// --- Drawing ---
+function draw(dt) {
+  // Clear
+  px(0, 0, NATIVE_W, NATIVE_H, '#080810');
+
+  // Starfield
+  drawStarfield(dt);
+
+  // Center line
+  for (let y = 0; y < NATIVE_H; y += 8) {
+    px(NATIVE_W / 2, y, 1, 4, '#1a1a2e');
+  }
+
+  if (game.state === 'menu' || game.state === 'gameOver') return;
+
+  const p1 = game.p1;
+  const p2 = game.p2;
+  const shield = game.shield;
+
+  // Draw ships
+  if (p1) drawShip(p1.x, p1.y, p1.w, p1.h, true, game.scores[0], game.flashTimers[0] > 0);
+  if (p2) drawShip(p2.x, p2.y, p2.w, p2.h, false, game.scores[1], game.flashTimers[1] > 0);
+
+  // Draw shield
+  if (shield) {
+    const shieldColor = shield.locked ? '#ff0' : '#0f8';
+    const glowColor = shield.locked ? 'rgba(255,255,0,0.15)' : 'rgba(0,255,128,0.1)';
+    // Glow
+    px(shield.x - 2, shield.y - 2, shield.w + 4, shield.h + 4, glowColor);
+    // Body
+    px(shield.x, shield.y, shield.w, shield.h, shieldColor);
+    // Inner line
+    px(shield.x + 3, shield.y + 2, shield.w - 6, shield.h - 4, shield.locked ? '#cc0' : '#0a6');
+
+    // Lock indicator
+    if (shield.locked) {
+      const lockText = Math.ceil(shield.lockTimer).toString();
+      drawText(lockText, shield.x + shield.w / 2, shield.y - 8, '#ff0', 8);
+    }
+  }
+
+  // Draw bullets
+  for (const b of game.bullets) {
+    const color = b.owner === 0 ? '#0af' : '#f44';
+    px(b.x, b.y, b.w, b.h, color);
+    // Trail
+    const trailX = b.owner === 0 ? b.x - 4 : b.x + b.w;
+    px(trailX, b.y + 1, 3, 1, b.owner === 0 ? 'rgba(0,170,255,0.4)' : 'rgba(255,68,68,0.4)');
+  }
+
+  // HUD
+  drawText(`P1: ${game.scores[0]}`, 60, 12, '#0af', 10);
+  drawText(`P2: ${game.scores[1]}`, NATIVE_W - 60, 12, '#f44', 10);
+
+  // Countdown
+  if (game.state === 'countdown') {
+    const n = Math.ceil(game.countdownTimer);
+    drawText(n > 0 ? n.toString() : 'GO', NATIVE_W / 2, NATIVE_H / 2, '#fff', 24);
+  }
+}
+
+// --- UI ---
+const overlay = document.getElementById('ui-overlay');
+const menuTitle = document.getElementById('menu-title');
+const menuRound = document.getElementById('menu-round');
+const menuWin = document.getElementById('menu-win');
+
+document.getElementById('btn-start').addEventListener('click', () => {
+  game.scores = [0, 0];
+  hideAllMenus();
+  resetRound();
+});
+
+document.getElementById('btn-restart').addEventListener('click', () => {
+  game.scores = [0, 0];
+  hideAllMenus();
+  resetRound();
+});
+
+function hideAllMenus() {
+  menuTitle.classList.remove('visible');
+  menuRound.classList.remove('visible');
+  menuWin.classList.remove('visible');
+  overlay.classList.remove('active');
+}
+
+function showRoundScreen(scorer) {
+  document.getElementById('round-text').textContent =
+    `PLAYER ${scorer + 1} SCORES!`;
+  document.getElementById('round-score').textContent =
+    `P1: ${game.scores[0]}  —  P2: ${game.scores[1]}`;
+  menuRound.classList.add('visible');
+  overlay.classList.add('active');
+  setTimeout(() => {
+    menuRound.classList.remove('visible');
+    overlay.classList.remove('active');
+  }, 1400);
+}
+
+function showWinScreen(winner) {
+  const tierNames = [
+    'Tin Can', 'Scout', 'Interceptor', 'Viper', 'Phantom',
+    'Wraith', 'Nova', 'Supernova', 'Celestial', 'LEGENDARY'
+  ];
+  document.getElementById('win-text').textContent =
+    `PLAYER ${winner + 1} WINS!`;
+  document.getElementById('win-ship').textContent =
+    `Final Form: ${tierNames[Math.min(game.scores[winner], 9)]}`;
+  menuWin.classList.add('visible');
+  overlay.classList.add('active');
+}
+
+// --- Game loop ---
+let lastTime = 0;
+function loop(time) {
+  const dt = Math.min((time - lastTime) / 1000, 0.05); // cap dt
+  lastTime = time;
+
+  update(dt);
+  draw(dt);
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame((t) => { lastTime = t; requestAnimationFrame(loop); });
+
+// ===========================================================
+// MULTIPLAYER INTEGRATION HOOKS
+// ===========================================================
+// The following functions define the interface for plugging
+// this game into a WebSocket-based lobby system.
+//
+// To integrate:
+// 1. Import/require this module or embed it
+// 2. Replace local input handling with networked input
+// 3. Use the exported functions below to sync state
+//
+// --- Outbound events (send to server) ---
+// onLocalInput(inputState) — called every frame with local player input
+// onFireEvent(playerId) — called when local player fires
+//
+// --- Inbound events (receive from server) ---
+// applyRemoteInput(playerId, inputState) — apply opponent's input
+// syncGameState(stateObj) — full state sync from authoritative server
+// startMatch() — server signals match start
+//
+// The `game` object is globally accessible for serialization.
+// ===========================================================
+
+</script>
+</body>
+</html>
