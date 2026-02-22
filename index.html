@@ -959,7 +959,7 @@ const net = {
   connected: false,
   remoteInput: { up: false, down: false, fire: false, fireOnce: false, mouseWheelDelta: 0 },
   stateBuffer: [],     // ring buffer of 3 recent state snapshots for interpolation
-  tickRate: 50,        // ms between state broadcasts (20Hz)
+  tickRate: 33,        // ms between state broadcasts (30Hz)
   inputRate: 16,       // ms between input sends (~60Hz)
   lastStateSend: 0,
   lastInputSend: 0,
@@ -2602,7 +2602,7 @@ function loop(time) {
       net.lastStateSend = now;
     }
   } else if (net.mode === 'client') {
-    // Client: skip update(), interpolate positions smoothly
+    // Client: skip update(), but locally simulate movement between state snapshots
     // Send input at ~60Hz
     const now = performance.now();
     if (now - net.lastInputSend >= net.inputRate) {
@@ -2610,12 +2610,12 @@ function loop(time) {
       net.lastInputSend = now;
     }
 
-    // Client-side interpolation for smooth rendering
+    // Client-side interpolation for P1 ship (opponent)
     if (game.p1 && game.p1._targetY !== undefined) {
-      game.p1.y = lerp(game.p1.y, game.p1._targetY, 0.3);
+      game.p1.y = lerp(game.p1.y, game.p1._targetY, 0.5);
     }
     if (game.p2 && game.p2._targetY !== undefined) {
-      game.p2.y = lerp(game.p2.y, game.p2._targetY, 0.3);
+      game.p2.y = lerp(game.p2.y, game.p2._targetY, 0.5);
     }
 
     // Client-side prediction: locally move own ship (P2) based on own input for responsiveness
@@ -2635,6 +2635,21 @@ function loop(time) {
         game.p2.y = Math.max(0, Math.min(NATIVE_H - game.p2.h, game.p2.y));
         game.p2._targetY = game.p2.y; // override target so interpolation doesn't fight prediction
       }
+    }
+
+    // Client-side bullet simulation (move bullets by velocity between state updates)
+    for (const b of game.bullets) {
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+    }
+
+    // Client-side shield simulation (continue movement between state updates)
+    if (game.shield && !game.shield.locked) {
+      game.shield.x += game.shield.vx * dt;
+      game.shield.y += game.shield.vy * dt;
+      // Bounce off top/bottom
+      if (game.shield.y < 0) { game.shield.y = 0; game.shield.vy = Math.abs(game.shield.vy); }
+      if (game.shield.y + game.shield.h > NATIVE_H) { game.shield.y = NATIVE_H - game.shield.h; game.shield.vy = -Math.abs(game.shield.vy); }
     }
 
     // Update shield colorTime locally for smooth animation
