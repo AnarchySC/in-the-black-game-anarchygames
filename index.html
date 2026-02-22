@@ -141,29 +141,29 @@ const MOD_SPAWN_MAX = 18;
 const MOD_ANNOUNCE_TIME = 2.0;
 
 // Gravity Well
-const GRAV_WELL_DURATION_MIN = 5;
-const GRAV_WELL_DURATION_MAX = 8;
-const GRAV_WELL_SLOW_MIN = 0.4;
-const GRAV_WELL_SLOW_MAX = 0.7;
-const GRAV_WELL_FAST_MIN = 1.5;
-const GRAV_WELL_FAST_MAX = 2.2;
+const GRAV_WELL_DURATION_MIN = 10;
+const GRAV_WELL_DURATION_MAX = 18;
+const GRAV_WELL_SLOW_MIN = 0.3;
+const GRAV_WELL_SLOW_MAX = 0.6;
+const GRAV_WELL_FAST_MIN = 1.6;
+const GRAV_WELL_FAST_MAX = 2.5;
 
 // Black Hole
-const BLACK_HOLE_DURATION_MIN = 6;
-const BLACK_HOLE_DURATION_MAX = 10;
-const BLACK_HOLE_PULL_MIN = 30;
-const BLACK_HOLE_PULL_MAX = 160;
-const BLACK_HOLE_BULLET_PULL_MIN = 15;
-const BLACK_HOLE_BULLET_PULL_MAX = 90;
+const BLACK_HOLE_DURATION_MIN = 12;
+const BLACK_HOLE_DURATION_MAX = 20;
+const BLACK_HOLE_PULL_MIN = 40;
+const BLACK_HOLE_PULL_MAX = 180;
+const BLACK_HOLE_BULLET_PULL_MIN = 20;
+const BLACK_HOLE_BULLET_PULL_MAX = 100;
 const BLACK_HOLE_RADIUS = 18;
 
 // Overclock
-const OVERCLOCK_DURATION_MIN = 4;
-const OVERCLOCK_DURATION_MAX = 6;
-const OVERCLOCK_MULTI_MIN = 2.0;
-const OVERCLOCK_MULTI_MAX = 4.0;
-const OVERCLOCK_DEBUFF_MIN = 3;
-const OVERCLOCK_DEBUFF_MAX = 4;
+const OVERCLOCK_DURATION_MIN = 6;
+const OVERCLOCK_DURATION_MAX = 10;
+const OVERCLOCK_MULTI_MIN = 2.5;
+const OVERCLOCK_MULTI_MAX = 4.5;
+const OVERCLOCK_DEBUFF_MIN = 5;
+const OVERCLOCK_DEBUFF_MAX = 8;
 
 // --- Pixel scaling ---
 let scale = 1;
@@ -177,6 +177,26 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 resize();
+
+// --- Background Sprites (randomly selected per match, scrolling) ---
+const bgImages = [];
+const BG_PATHS = [
+  'assets/backgrounds/itb_bg_cosmos1.png',
+  'assets/backgrounds/itb_bg_cosmos2.png',
+  'assets/backgrounds/itb_bg_cosmos3.png',
+  'assets/backgrounds/itb_bg_cosmos4.png',
+  'assets/backgrounds/itb_bg_cosmos5.png',
+];
+(function() {
+  for (const path of BG_PATHS) {
+    const img = new Image();
+    img.src = path;
+    bgImages.push(img);
+  }
+})();
+let activeBg = null;
+let bgScrollX = 0;
+const BG_SCROLL_SPEED = 12; // pixels per second
 
 // --- Utility ---
 function randRange(min, max) {
@@ -197,59 +217,218 @@ function drawText(text, x, y, color, size) {
   ctx.fillText(text, x * scale, y * scale);
 }
 
-// --- Ship pixel art ---
+// --- Ship pixel art — 10 unique tier designs ---
 function drawShip(x, y, w, h, facingRight, tier, flash) {
-  const colors = getShipColors(tier);
-  const cx = x + w / 2;
-  const cy = y + h / 2;
-
   if (flash) {
     px(x - 2, y - 2, w + 4, h + 4, 'rgba(255,255,255,0.6)');
     return;
   }
 
-  px(x + 2, y + 2, w - 4, h - 4, colors.body);
-  const cockpitX = facingRight ? x + w - 5 : x + 1;
-  px(cockpitX, cy - 3, 4, 6, colors.cockpit);
-  px(x, y, w * 0.4, 3, colors.wing);
-  px(x, y + h - 3, w * 0.4, 3, colors.wing);
-  const engineX = facingRight ? x - 2 : x + w;
-  px(engineX, cy - 2, 3, 4, colors.engine);
+  const c = getShipColors(tier);
+  const cy = y + h / 2;
+  const hh = Math.floor(h / 2);
 
-  if (tier > 0) {
-    const stripeCount = Math.min(tier, 5);
-    for (let i = 0; i < stripeCount; i++) {
-      const sy = y + 4 + i * Math.floor((h - 8) / Math.max(stripeCount, 1));
-      px(x + 4, sy, w - 8, 1, colors.stripe);
-    }
+  // dp: draw pixel with auto-mirror for facing direction
+  // lx: 0 = tail edge, positive = toward nose. ly: offset from center.
+  function dp(lx, ly, dw, dh, color) {
+    px(facingRight ? (x + lx) : (x + w - lx - dw), cy + ly, dw, dh, color);
   }
-  if (tier >= 3) {
-    px(facingRight ? x + w - 2 : x - 1, y - 2, 3, 2, colors.wing);
-    px(facingRight ? x + w - 2 : x - 1, y + h, 3, 2, colors.wing);
+
+  // T0: Tin Can — basic rectangle, tiny cockpit, single engine
+  if (tier === 0) {
+    dp(3, -4, 11, 8, c.body);
+    dp(13, -2, 3, 4, c.cockpit);
+    dp(1, -2, 3, 4, c.engine);
+    dp(-1, -1, 2, 2, '#e60');
   }
-  if (tier >= 6) {
-    px(x + 1, y + 1, w - 2, 1, colors.stripe);
-    px(x + 1, y + h - 2, w - 2, 1, colors.stripe);
+
+  // T1: Scout — longer hull, small fins, accent stripe
+  else if (tier === 1) {
+    dp(2, -5, 13, 10, c.body);
+    dp(14, -2, 3, 4, c.cockpit);
+    dp(0, -2, 3, 4, c.engine);
+    dp(-2, -1, 2, 2, '#f80');
+    dp(1, -hh, 5, 2, c.wing);
+    dp(1, hh - 2, 5, 2, c.wing);
+    dp(5, 0, 8, 1, c.stripe);
   }
-  if (tier >= 8) {
-    ctx.globalAlpha = 0.15;
-    px(x - 3, y - 3, w + 6, h + 6, colors.engine);
+
+  // T2: Interceptor — tapered hull, swept wings, dual engines
+  else if (tier === 2) {
+    dp(1, -5, 6, 10, c.body);
+    dp(7, -4, 5, 8, c.body);
+    dp(12, -2, 4, 4, c.body);
+    dp(14, -1, 3, 2, c.cockpit);
+    dp(0, -hh + 1, 9, 2, c.wing);
+    dp(0, hh - 3, 9, 2, c.wing);
+    dp(0, -hh - 1, 3, 1, c.stripe);
+    dp(0, hh, 3, 1, c.stripe);
+    dp(-1, -4, 2, 2, c.engine);
+    dp(-1, 2, 2, 2, c.engine);
+    dp(-3, -3, 2, 1, '#0ef');
+    dp(-3, 3, 2, 1, '#0ef');
+    dp(4, 0, 10, 1, c.stripe);
+  }
+
+  // T3: Viper — angular hull, gun mounts on wings, aggressive
+  else if (tier === 3) {
+    dp(2, -4, 5, 8, c.body);
+    dp(7, -3, 5, 6, c.body);
+    dp(12, -1, 5, 2, c.body);
+    dp(15, -1, 3, 2, c.cockpit);
+    dp(-1, -hh + 1, 11, 2, c.wing);
+    dp(-1, hh - 3, 11, 2, c.wing);
+    dp(9, -hh - 1, 3, 2, c.stripe);
+    dp(9, hh - 1, 3, 2, c.stripe);
+    dp(0, -3, 3, 6, c.engine);
+    dp(-3, -2, 3, 4, '#fc0');
+    dp(4, -3, 7, 1, c.stripe);
+    dp(4, 3, 7, 1, c.stripe);
+    dp(7, 0, 5, 1, '#ff0');
+  }
+
+  // T4: Phantom — low-profile stealth, dark body, bright edge lines
+  else if (tier === 4) {
+    dp(2, -3, 13, 6, c.body);
+    dp(15, -1, 2, 2, c.cockpit);
+    dp(0, -hh + 2, 12, 2, c.wing);
+    dp(0, hh - 4, 12, 2, c.wing);
+    dp(0, -hh, 6, 2, c.wing);
+    dp(0, hh - 2, 6, 2, c.wing);
+    dp(-1, -2, 2, 4, c.engine);
+    dp(-3, -1, 2, 2, '#08f');
+    // Bright edge highlights
+    dp(2, -3, 13, 1, c.stripe);
+    dp(2, 3, 13, 1, c.stripe);
+    dp(0, -hh + 2, 12, 1, '#0ff');
+    dp(0, hh - 3, 12, 1, '#0ff');
+  }
+
+  // T5: Wraith — ornate, triple engines, energy lines
+  else if (tier === 5) {
+    dp(3, -5, 10, 10, c.body);
+    dp(13, -2, 4, 4, c.cockpit);
+    dp(0, -5, 2, 2, c.engine);
+    dp(0, -1, 2, 2, c.engine);
+    dp(0, 3, 2, 2, c.engine);
+    dp(-2, -4, 2, 1, '#a0f');
+    dp(-3, 0, 3, 1, '#c4f');
+    dp(-2, 4, 2, 1, '#a0f');
+    dp(1, -hh + 1, 8, 2, c.wing);
+    dp(1, hh - 3, 8, 2, c.wing);
+    // Energy lines
+    dp(4, -4, 9, 1, c.stripe);
+    dp(4, -2, 9, 1, c.stripe);
+    dp(4, 2, 9, 1, c.stripe);
+    dp(4, 4, 9, 1, c.stripe);
+  }
+
+  // T6: Nova — heavy warship, wide hull, forward-swept wings
+  else if (tier === 6) {
+    dp(2, -6, 12, 12, c.body);
+    dp(3, -5, 10, 10, '#733');
+    dp(12, -3, 4, 6, c.body);
+    dp(14, -1, 3, 2, c.cockpit);
+    dp(6, -hh + 1, 8, 2, c.wing);
+    dp(6, hh - 3, 8, 2, c.wing);
+    dp(2, -hh + 3, 5, 2, c.wing);
+    dp(2, hh - 5, 5, 2, c.wing);
+    dp(-1, -4, 3, 8, c.engine);
+    dp(-3, -3, 2, 6, '#f40');
+    dp(5, -5, 1, 10, c.stripe);
+    dp(9, -4, 1, 8, c.stripe);
+  }
+
+  // T7: Supernova — slim crystalline body, translucent energy wings
+  else if (tier === 7) {
+    dp(4, -4, 9, 8, c.body);
+    dp(13, -2, 4, 4, c.cockpit);
+    dp(0, -2, 3, 4, c.engine);
+    dp(-2, -1, 2, 2, '#f8f');
+    // Energy wings (translucent)
+    ctx.globalAlpha = 0.25;
+    dp(-2, -hh, 14, 3, c.wing);
+    dp(-2, hh - 3, 14, 3, c.wing);
     ctx.globalAlpha = 1.0;
+    dp(-2, -hh + 2, 14, 1, '#faf');
+    dp(-2, hh - 1, 14, 1, '#faf');
+    // Body accents
+    dp(5, -3, 7, 1, c.stripe);
+    dp(5, 3, 7, 1, c.stripe);
+    // Inner glow
+    ctx.globalAlpha = 0.15;
+    dp(5, -2, 7, 4, '#fff');
+    ctx.globalAlpha = 1.0;
+  }
+
+  // T8: Celestial — double-delta wings, golden accents, faint aura
+  else if (tier === 8) {
+    // Aura
+    ctx.globalAlpha = 0.08;
+    dp(-4, -hh - 3, w + 8, h + 6, c.engine);
+    ctx.globalAlpha = 1.0;
+    dp(2, -6, 12, 12, c.body);
+    dp(12, -3, 4, 6, c.body);
+    dp(14, -1, 3, 2, c.cockpit);
+    // Double-delta wings
+    dp(2, -hh + 1, 10, 2, c.wing);
+    dp(2, hh - 3, 10, 2, c.wing);
+    dp(0, -hh - 1, 7, 2, c.wing);
+    dp(0, hh - 1, 7, 2, c.wing);
+    // Engine
+    dp(0, -3, 3, 6, c.engine);
+    dp(-3, -2, 3, 4, '#fa0');
+    // Golden accents
+    dp(4, -5, 8, 1, '#fd0');
+    dp(4, 5, 8, 1, '#fd0');
+    dp(6, -4, 2, 8, '#fc0');
+  }
+
+  // T9: LEGENDARY — golden, radiant aura, elaborate multi-wing, engine array
+  else {
+    // Radiant aura
+    ctx.globalAlpha = 0.06;
+    dp(-6, -hh - 4, w + 12, h + 8, '#ff0');
+    ctx.globalAlpha = 0.12;
+    dp(-3, -hh - 2, w + 6, h + 4, '#fa0');
+    ctx.globalAlpha = 1.0;
+    // Golden hull
+    dp(1, -6, 14, 12, c.body);
+    dp(13, -3, 4, 6, c.body);
+    dp(15, -1, 3, 2, c.cockpit);
+    // Elaborate wings
+    dp(-2, -hh, 14, 3, c.wing);
+    dp(-2, hh - 3, 14, 3, c.wing);
+    dp(-2, -hh - 2, 5, 2, c.stripe);
+    dp(-2, hh, 5, 2, c.stripe);
+    // Multi-engine array
+    dp(0, -5, 2, 2, c.engine);
+    dp(0, -1, 2, 2, c.engine);
+    dp(0, 3, 2, 2, c.engine);
+    dp(-3, -4, 3, 1, '#ff0');
+    dp(-4, 0, 4, 1, '#ff8');
+    dp(-3, 4, 3, 1, '#ff0');
+    // Ornate details
+    dp(3, -5, 10, 1, '#fff');
+    dp(3, 5, 10, 1, '#fff');
+    dp(5, -4, 7, 1, c.stripe);
+    dp(5, 4, 7, 1, c.stripe);
+    dp(8, -1, 2, 2, '#fff');
   }
 }
 
 function getShipColors(tier) {
   const palettes = [
-    { body: '#445', cockpit: '#0af', wing: '#556', engine: '#f80', stripe: '#0af' },
-    { body: '#446', cockpit: '#0bf', wing: '#668', engine: '#fa0', stripe: '#0cf' },
-    { body: '#448', cockpit: '#0cf', wing: '#77a', engine: '#fb0', stripe: '#0ef' },
-    { body: '#358', cockpit: '#0ff', wing: '#88c', engine: '#fc0', stripe: '#ff0' },
-    { body: '#36a', cockpit: '#2ff', wing: '#99d', engine: '#fd0', stripe: '#ff2' },
-    { body: '#46c', cockpit: '#4ff', wing: '#aae', engine: '#fe2', stripe: '#fa0' },
-    { body: '#f06', cockpit: '#fff', wing: '#f39', engine: '#ff0', stripe: '#0ff' },
-    { body: '#f0a', cockpit: '#fff', wing: '#f6c', engine: '#ff4', stripe: '#0ff' },
-    { body: '#c0f', cockpit: '#fff', wing: '#d4f', engine: '#ff8', stripe: '#ff0' },
-    { body: '#ff0', cockpit: '#fff', wing: '#ffa', engine: '#f0f', stripe: '#0ff' },
+    { body: '#556', cockpit: '#4af', wing: '#667', engine: '#c60', stripe: '#789' },
+    { body: '#457', cockpit: '#3cf', wing: '#568', engine: '#e80', stripe: '#5af' },
+    { body: '#246', cockpit: '#0ff', wing: '#358', engine: '#0cf', stripe: '#0ef' },
+    { body: '#353', cockpit: '#0ff', wing: '#464', engine: '#fc0', stripe: '#ff0' },
+    { body: '#224', cockpit: '#0ff', wing: '#335', engine: '#08f', stripe: '#0ff' },
+    { body: '#426', cockpit: '#c4f', wing: '#537', engine: '#a0f', stripe: '#d6f' },
+    { body: '#622', cockpit: '#fff', wing: '#833', engine: '#f40', stripe: '#f80' },
+    { body: '#a48', cockpit: '#fff', wing: '#c6a', engine: '#f8f', stripe: '#faf' },
+    { body: '#537', cockpit: '#ff0', wing: '#648', engine: '#fa0', stripe: '#fd0' },
+    { body: '#a80', cockpit: '#fff', wing: '#db0', engine: '#ff0', stripe: '#fff' },
   ];
   return palettes[Math.min(tier, palettes.length - 1)];
 }
@@ -343,6 +522,11 @@ function resetRound() {
 }
 
 function resetMatch() {
+  // Pick a random background for this match
+  const ready = bgImages.filter(img => img.complete && img.naturalWidth > 0);
+  activeBg = ready.length > 0 ? ready[Math.floor(Math.random() * ready.length)] : null;
+  bgScrollX = 0;
+
   game.scores = [0, 0];
   game.modifiers.spawnTimer = randRange(MOD_SPAWN_MIN, MOD_SPAWN_MAX);
   game.modifiers.active = null;
@@ -499,18 +683,26 @@ function spawnModifier() {
 }
 
 function generateDebuffPattern(duration) {
+  // Burnout: mostly CAN'T fire, with brief sporadic burst windows
   const pattern = [];
   let t = 0;
   while (t < duration) {
-    const burstCount = Math.floor(Math.random() * 3) + 1;
-    const burstInterval = 0.1 + Math.random() * 0.15;
-    for (let i = 0; i < burstCount; i++) {
-      pattern.push({ time: t, canFire: true });
-      t += burstInterval;
-    }
-    t += 0.5 + Math.random() * 1.0;
+    // Long dead zone where firing is blocked (1.0 - 2.5s)
+    const deadTime = 1.0 + Math.random() * 1.5;
     pattern.push({ time: t, canFire: false });
+    t += deadTime;
+    // Brief burst window — 1-2 shots only (0.15 - 0.3s)
+    if (t < duration) {
+      const burstCount = Math.random() < 0.6 ? 1 : 2;
+      pattern.push({ time: t, canFire: true });
+      t += 0.15 + Math.random() * 0.15;
+      if (burstCount > 1 && t < duration) {
+        t += 0.1;
+      }
+    }
   }
+  // Ensure it ends blocked
+  pattern.push({ time: duration, canFire: false });
   return pattern;
 }
 
@@ -960,8 +1152,39 @@ function drawModifierAnnouncement() {
 // ============================================================
 
 function draw(dt) {
-  px(0, 0, NATIVE_W, NATIVE_H, '#080810');
+  // Background — scrolling parallax image + starfield
+  px(0, 0, NATIVE_W, NATIVE_H, '#060610');
+
+  if (activeBg) {
+    bgScrollX = (bgScrollX + BG_SCROLL_SPEED * dt) % activeBg.naturalWidth;
+    const cw = canvas.width;
+    const ch = canvas.height;
+    const iw = activeBg.naturalWidth;
+    const ih = activeBg.naturalHeight;
+
+    // Scale background to fill canvas height, maintain aspect ratio
+    const bgScale = ch / ih;
+    const drawW = iw * bgScale;
+
+    // Draw tiled copies for seamless scroll
+    ctx.globalAlpha = 0.55;
+    const offsetPx = bgScrollX * bgScale;
+    let startX = -offsetPx;
+    while (startX < cw) {
+      ctx.drawImage(activeBg, startX, 0, drawW, ch);
+      startX += drawW;
+    }
+    ctx.globalAlpha = 1.0;
+
+    // Darken overlay so game elements pop
+    ctx.fillStyle = 'rgba(0, 0, 8, 0.2)';
+    ctx.fillRect(0, 0, cw, ch);
+  }
+
+  // Starfield on top for parallax depth
+  ctx.globalAlpha = activeBg ? 0.4 : 1.0;
   drawStarfield(dt);
+  ctx.globalAlpha = 1.0;
 
   for (let y = 0; y < NATIVE_H; y += 8) {
     px(NATIVE_W / 2, y, 1, 4, '#1a1a2e');
@@ -982,9 +1205,9 @@ function draw(dt) {
 
   // Shield orb
   if (shield) {
-    const cx = (shield.x + shield.r) * scale;
-    const cy = (shield.y + shield.r) * scale;
-    const r = shield.r * scale;
+    const scx = (shield.x + shield.r) * scale;
+    const scy = (shield.y + shield.r) * scale;
+    const sr = shield.r * scale;
     const t = shield.colorTime || 0;
 
     const hue = shield.locked ? 60 : (t * 40) % 360;
@@ -994,27 +1217,27 @@ function draw(dt) {
 
     ctx.save();
     ctx.beginPath();
-    ctx.arc(cx, cy, r + 6 * scale, 0, Math.PI * 2);
+    ctx.arc(scx, scy, sr + 6 * scale, 0, Math.PI * 2);
     ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha * 0.3})`;
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(cx, cy, r + 2 * scale, 0, Math.PI * 2);
+    ctx.arc(scx, scy, sr + 2 * scale, 0, Math.PI * 2);
     ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha * 0.5})`;
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.arc(scx, scy, sr, 0, Math.PI * 2);
     ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`;
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(cx - r * 0.25, cy - r * 0.25, r * 0.4, 0, Math.PI * 2);
+    ctx.arc(scx - sr * 0.25, scy - sr * 0.25, sr * 0.4, 0, Math.PI * 2);
     ctx.fillStyle = `hsla(${hue}, 30%, 80%, ${alpha * 0.6})`;
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(cx, cy, r - 1 * scale, 0, Math.PI * 2);
+    ctx.arc(scx, scy, sr - 1 * scale, 0, Math.PI * 2);
     ctx.strokeStyle = `hsla(${(hue + 30) % 360}, ${sat}%, ${light + 20}%, ${alpha * 0.8})`;
     ctx.lineWidth = 1.5 * scale;
     ctx.stroke();
