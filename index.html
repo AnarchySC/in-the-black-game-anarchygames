@@ -2462,21 +2462,21 @@ function applyState(s) {
   if (s.p1 && game.p1) {
     game.p1.x = s.p1.x; game.p1.w = s.p1.w; game.p1.h = s.p1.h;
     game.p1.vy = s.p1.vy; game.p1.fireCooldown = s.p1.fc; game.p1.alive = s.p1.a;
-    // Interpolate y position
+    // Set target — game loop handles smooth interpolation
     game.p1._targetY = s.p1.y;
-    if (game.p1._targetY !== undefined) {
-      game.p1.y = lerp(game.p1.y, game.p1._targetY, 0.4);
-    }
   } else if (s.p1) {
     game.p1 = { id: 0, x: s.p1.x, y: s.p1.y, w: s.p1.w, h: s.p1.h, vy: s.p1.vy, fireCooldown: s.p1.fc, alive: s.p1.a };
   }
 
   if (s.p2 && game.p2) {
-    game.p2.x = s.p2.x; game.p2.w = s.p2.w; game.p2.h = s.p2.h;
-    game.p2.vy = s.p2.vy; game.p2.fireCooldown = s.p2.fc; game.p2.alive = s.p2.a;
-    game.p2._targetY = s.p2.y;
-    if (game.p2._targetY !== undefined) {
-      game.p2.y = lerp(game.p2.y, game.p2._targetY, 0.4);
+    game.p2.w = s.p2.w; game.p2.h = s.p2.h;
+    game.p2.fireCooldown = s.p2.fc; game.p2.alive = s.p2.a;
+    // Client's own ship: only gently correct, don't overwrite position
+    if (net.mode === 'client') {
+      game.p2._targetY = s.p2.y;
+    } else {
+      game.p2.x = s.p2.x; game.p2.vy = s.p2.vy;
+      game.p2._targetY = s.p2.y;
     }
   } else if (s.p2) {
     game.p2 = { id: 1, x: s.p2.x, y: s.p2.y, w: s.p2.w, h: s.p2.h, vy: s.p2.vy, fireCooldown: s.p2.fc, alive: s.p2.a };
@@ -2485,7 +2485,13 @@ function applyState(s) {
   if (s.sh) {
     if (!game.shield) game.shield = createShield();
     const sh = game.shield;
-    sh.x = s.sh.x; sh.y = s.sh.y; sh.vx = s.sh.vx; sh.vy = s.sh.vy;
+    // Lerp shield position for smooth movement on client
+    if (net.mode === 'client') {
+      sh._targetX = s.sh.x; sh._targetY = s.sh.y;
+    } else {
+      sh.x = s.sh.x; sh.y = s.sh.y;
+    }
+    sh.vx = s.sh.vx; sh.vy = s.sh.vy;
     sh.locked = s.sh.l; sh.lockTimer = s.sh.lt; sh.lockSide = s.sh.ls; sh.colorTime = s.sh.ct;
   }
 
@@ -2602,7 +2608,7 @@ function loop(time) {
       net.lastStateSend = now;
     }
   } else if (net.mode === 'client') {
-    // Client: skip update(), but locally simulate movement between state snapshots
+    // Client: skip update(), interpolate between state snapshots
     // Send input at ~60Hz
     const now = performance.now();
     if (now - net.lastInputSend >= net.inputRate) {
@@ -2610,15 +2616,12 @@ function loop(time) {
       net.lastInputSend = now;
     }
 
-    // Client-side interpolation for P1 ship (opponent)
+    // Smooth interpolation for P1 (opponent) — converge toward host position
     if (game.p1 && game.p1._targetY !== undefined) {
-      game.p1.y = lerp(game.p1.y, game.p1._targetY, 0.5);
-    }
-    if (game.p2 && game.p2._targetY !== undefined) {
-      game.p2.y = lerp(game.p2.y, game.p2._targetY, 0.5);
+      game.p1.y = lerp(game.p1.y, game.p1._targetY, 0.25);
     }
 
-    // Client-side prediction: locally move own ship (P2) based on own input for responsiveness
+    // Client-side prediction: locally move own ship (P2) based on own input
     if (game.p2 && game.state === 'playing') {
       let p2Move = 0;
       if (input.p1Up) p2Move -= 1; // client uses P1 controls for their ship
@@ -2634,26 +2637,20 @@ function loop(time) {
         game.p2.y += p2Move * SHIP_SPEED * speedMult * dt;
         game.p2.y = Math.max(0, Math.min(NATIVE_H - game.p2.h, game.p2.y));
         game.p2._targetY = game.p2.y; // override target so interpolation doesn't fight prediction
+      } else if (game.p2._targetY !== undefined) {
+        // Only correct toward host when not actively moving
+        game.p2.y = lerp(game.p2.y, game.p2._targetY, 0.15);
       }
     }
 
-    // Client-side bullet simulation (move bullets by velocity between state updates)
-    for (const b of game.bullets) {
-      b.x += b.vx * dt;
-      b.y += b.vy * dt;
+    // Smooth shield interpolation (lerp toward host position)
+    if (game.shield) {
+      if (game.shield._targetX !== undefined) {
+        game.shield.x = lerp(game.shield.x, game.shield._targetX, 0.3);
+        game.shield.y = lerp(game.shield.y, game.shield._targetY, 0.3);
+      }
+      game.shield.colorTime += dt;
     }
-
-    // Client-side shield simulation (continue movement between state updates)
-    if (game.shield && !game.shield.locked) {
-      game.shield.x += game.shield.vx * dt;
-      game.shield.y += game.shield.vy * dt;
-      // Bounce off top/bottom
-      if (game.shield.y < 0) { game.shield.y = 0; game.shield.vy = Math.abs(game.shield.vy); }
-      if (game.shield.y + game.shield.h > NATIVE_H) { game.shield.y = NATIVE_H - game.shield.h; game.shield.vy = -Math.abs(game.shield.vy); }
-    }
-
-    // Update shield colorTime locally for smooth animation
-    if (game.shield) game.shield.colorTime += dt;
 
     // Update flash timers locally
     game.flashTimers[0] = Math.max(0, game.flashTimers[0] - dt);
