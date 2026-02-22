@@ -157,7 +157,7 @@
     <h2>// ORBITAL COMBAT //</h2>
     <p>Two ships. One shield. Shoot your opponent while the shield drifts between you.
     Don't let it pass you — or your enemy gets 2 seconds of cover.
-    Best of 10 rounds. First to 6 wins.</p>
+    First to 10 wins.</p>
     <p id="controls-hint" style="color:#666; font-size:11px;">
       P1: W/S or Mouse Wheel to move &bull; Click or Space to fire<br>
       P2: Up/Down arrows to move &bull; Enter to fire
@@ -237,8 +237,8 @@ const SHIP_SPEED = 200;
 const FIRE_RATE = 3.5;
 const FIRE_INTERVAL = 1.0 / FIRE_RATE;
 const SHIP_MARGIN = 40;
-const WIN_SCORE = 6; // best of 10 — first to 6 wins
-const MAX_ROUNDS = 10;
+const WIN_SCORE = 10;
+const MAX_ROUNDS = 19; // best of 19 — first to 10 wins
 
 // --- Modifier Constants ---
 const MOD_SPAWN_MIN = 8;
@@ -959,7 +959,7 @@ const net = {
   connected: false,
   remoteInput: { up: false, down: false, fire: false, fireOnce: false, mouseWheelDelta: 0 },
   stateBuffer: [],     // ring buffer of 3 recent state snapshots for interpolation
-  tickRate: 33,        // ms between state broadcasts (30Hz)
+  tickRate: 22,        // ms between state broadcasts (~45Hz)
   inputRate: 16,       // ms between input sends (~60Hz)
   lastStateSend: 0,
   lastInputSend: 0,
@@ -1027,6 +1027,7 @@ function resetMatch() {
     }
   }
 
+  net._svSent = 0; // re-send ship variants at match start
   game.scores = [0, 0];
   game.modifiers.spawnTimer = randRange(MOD_SPAWN_MIN, MOD_SPAWN_MAX);
   game.modifiers.active = null;
@@ -1637,7 +1638,7 @@ function handleHit(hitPlayerId) {
 
   const totalRounds = game.scores[0] + game.scores[1];
 
-  // Win condition: first to 6 (majority of 10)
+  // Win condition: first to 10
   if (game.scores[scorerId] >= WIN_SCORE) {
     game.state = 'gameOver';
     game.roundWinner = scorerId;
@@ -2232,7 +2233,8 @@ function setupConnection(conn) {
 function handleNetMessage(data) {
   switch (data.t) {
     case 'start':
-      // Client receives start signal from host
+      // Client receives start signal from host (may arrive multiple times)
+      if (net.mode === 'client') break; // already started
       net.connected = true;
       hideAllMenus();
       net.mode = 'client';
@@ -2303,8 +2305,10 @@ function startHost() {
       net.mode = 'host';
       net.connected = true;
 
-      // Tell client to start
+      // Tell client to start (send multiple times for unreliable channel)
       conn.send({ t: 'start' });
+      setTimeout(() => conn.open && conn.send({ t: 'start' }), 50);
+      setTimeout(() => conn.open && conn.send({ t: 'start' }), 150);
 
       hideAllMenus();
       resetMatch();
@@ -2337,7 +2341,7 @@ function startClient(code) {
   net.roomCode = code;
 
   peer.on('open', () => {
-    const conn = peer.connect('ITB-' + code, { reliable: true });
+    const conn = peer.connect('ITB-' + code, { reliable: false, serialization: 'json' });
 
     // 10s connection timeout
     net.clientTimeout = setTimeout(() => {
@@ -2420,8 +2424,12 @@ function serializeState() {
       dmd: mods.overclock.debuffMaxDuration,
       dp: mods.overclock.debuffPattern
     } : null,
-    sv: game.shipVariants,
   };
+  // Only send ship variants on first few ticks (they don't change mid-match)
+  if (!net._svSent || net._svSent < 5) {
+    state.sv = game.shipVariants;
+    net._svSent = (net._svSent || 0) + 1;
+  }
   return state;
 }
 
