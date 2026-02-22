@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>IN THE BLACK</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%23060610'/><circle cx='8' cy='8' r='4' fill='%230ff' opacity='0.6'/></svg>">
 <style>
   @font-face {
     font-family: 'Codex';
@@ -2305,10 +2306,8 @@ function startHost() {
       net.mode = 'host';
       net.connected = true;
 
-      // Tell client to start (send multiple times for unreliable channel)
+      // Tell client to start
       conn.send({ t: 'start' });
-      setTimeout(() => conn.open && conn.send({ t: 'start' }), 50);
-      setTimeout(() => conn.open && conn.send({ t: 'start' }), 150);
 
       hideAllMenus();
       resetMatch();
@@ -2341,7 +2340,7 @@ function startClient(code) {
   net.roomCode = code;
 
   peer.on('open', () => {
-    const conn = peer.connect('ITB-' + code, { reliable: false, serialization: 'json' });
+    const conn = peer.connect('ITB-' + code, { reliable: true, serialization: 'json' });
 
     // 10s connection timeout
     net.clientTimeout = setTimeout(() => {
@@ -2387,41 +2386,42 @@ function serializeState() {
   const p2 = game.p2;
   const s = game.shield;
   const mods = game.modifiers;
+  const r = Math.round; // round all floats to integers — halves JSON size
 
   const state = {
     t: 'state',
     gs: game.state,
-    ct: game.countdownTimer,
+    ct: +game.countdownTimer.toFixed(1),
     sc: game.scores,
-    ft: game.flashTimers,
+    ft: [+game.flashTimers[0].toFixed(2), +game.flashTimers[1].toFixed(2)],
     rw: game.roundWinner,
-    p1: p1 ? { x: p1.x, y: p1.y, w: p1.w, h: p1.h, vy: p1.vy, fc: p1.fireCooldown, a: p1.alive } : null,
-    p2: p2 ? { x: p2.x, y: p2.y, w: p2.w, h: p2.h, vy: p2.vy, fc: p2.fireCooldown, a: p2.alive } : null,
-    sh: s ? { x: s.x, y: s.y, vx: s.vx, vy: s.vy, l: s.locked, lt: s.lockTimer, ls: s.lockSide, ct: s.colorTime } : null,
-    bl: game.bullets.map(b => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, o: b.owner })),
+    p1: p1 ? { x: r(p1.x), y: r(p1.y), w: p1.w, h: p1.h, vy: r(p1.vy), fc: +p1.fireCooldown.toFixed(2), a: p1.alive } : null,
+    p2: p2 ? { x: r(p2.x), y: r(p2.y), w: p2.w, h: p2.h, vy: r(p2.vy), fc: +p2.fireCooldown.toFixed(2), a: p2.alive } : null,
+    sh: s ? { x: r(s.x), y: r(s.y), vx: r(s.vx), vy: r(s.vy), l: s.locked, lt: +s.lockTimer.toFixed(1), ls: s.lockSide, ct: +s.colorTime.toFixed(1) } : null,
+    bl: game.bullets.map(b => ({ x: r(b.x), y: r(b.y), vx: r(b.vx), vy: r(b.vy), o: b.owner })),
     ma: mods.active ? mods.active.type : null,
-    ann: mods.announcement ? { text: mods.announcement.text, timer: mods.announcement.timer } : null,
+    ann: mods.announcement ? { text: mods.announcement.text, timer: +mods.announcement.timer.toFixed(1) } : null,
     gw: mods.gravityWell ? {
-      sm: mods.gravityWell.speedMultiplier,
-      ti: mods.gravityWell.timer,
-      md: mods.gravityWell.maxDuration,
+      sm: +mods.gravityWell.speedMultiplier.toFixed(2),
+      ti: +mods.gravityWell.timer.toFixed(1),
+      md: +mods.gravityWell.maxDuration.toFixed(1),
       is: mods.gravityWell.isSlow
     } : null,
     bh: mods.blackHole ? {
-      x: mods.blackHole.x, y: mods.blackHole.y,
-      ps: mods.blackHole.pullStrength,
-      bp: mods.blackHole.bulletPull,
-      ti: mods.blackHole.timer,
-      md: mods.blackHole.maxDuration,
-      an: mods.blackHole.angle
+      x: r(mods.blackHole.x), y: r(mods.blackHole.y),
+      ps: r(mods.blackHole.pullStrength),
+      bp: r(mods.blackHole.bulletPull),
+      ti: +mods.blackHole.timer.toFixed(1),
+      md: +mods.blackHole.maxDuration.toFixed(1),
+      an: +mods.blackHole.angle.toFixed(2)
     } : null,
     oc: mods.overclock ? {
-      fm: mods.overclock.fireMultiplier,
-      ti: mods.overclock.timer,
-      md: mods.overclock.maxDuration,
+      fm: +mods.overclock.fireMultiplier.toFixed(2),
+      ti: +mods.overclock.timer.toFixed(1),
+      md: +mods.overclock.maxDuration.toFixed(1),
       db: mods.overclock.debuff,
-      dt: mods.overclock.debuffTimer,
-      dmd: mods.overclock.debuffMaxDuration,
+      dt: +mods.overclock.debuffTimer.toFixed(1),
+      dmd: +mods.overclock.debuffMaxDuration.toFixed(1),
       dp: mods.overclock.debuffPattern
     } : null,
   };
