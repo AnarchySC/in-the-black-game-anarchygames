@@ -1398,7 +1398,7 @@ function update(dt) {
     } else {
       const protectedPlayer = shield.lockSide === 0 ? p1 : p2;
       const targetX = shield.lockSide === 0
-        ? protectedPlayer.x + protectedPlayer.w + 8 - shield.r
+        ? protectedPlayer.x + protectedPlayer.w + 8
         : protectedPlayer.x - shield.r * 2 - 8;
       const targetY = protectedPlayer.y + protectedPlayer.h / 2 - shield.r;
       shield.x += (targetX - shield.x) * 8 * dt;
