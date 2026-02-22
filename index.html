@@ -71,9 +71,85 @@
     color: #000;
     box-shadow: 0 0 15px #f44;
   }
+  .menu .btn-row { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  .menu button.btn-secondary {
+    color: #0af;
+    border-color: #0af;
+  }
+  .menu button.btn-secondary:hover {
+    background: #0af;
+    color: #000;
+    box-shadow: 0 0 15px #0af;
+  }
+  .room-code {
+    font-size: 36px;
+    color: #0f0;
+    letter-spacing: 12px;
+    text-shadow: 0 0 20px #0f0;
+    font-family: 'Codex', monospace;
+  }
+  .room-input {
+    font-family: 'Codex', monospace;
+    font-size: 24px;
+    padding: 8px 16px;
+    background: transparent;
+    color: #0f0;
+    border: 2px solid #0f0;
+    text-align: center;
+    letter-spacing: 8px;
+    width: 180px;
+    text-transform: uppercase;
+    outline: none;
+    caret-color: #0f0;
+  }
+  .room-input:focus {
+    box-shadow: 0 0 15px rgba(0, 255, 0, 0.3);
+  }
+  .room-input::placeholder {
+    color: #363;
+    letter-spacing: 4px;
+    font-size: 14px;
+  }
+  .status-text {
+    color: #888;
+    font-size: 11px;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+  .menu button.btn-cancel {
+    color: #f44;
+    border-color: #f44;
+    font-size: 12px;
+    padding: 6px 20px;
+  }
+  .menu button.btn-cancel:hover {
+    background: #f44;
+    color: #000;
+    box-shadow: 0 0 15px #f44;
+  }
+  #disconnect-overlay {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: none;
+    justify-content: center;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 20;
+    flex-direction: column;
+    gap: 16px;
+    font-family: 'Codex', monospace;
+    text-align: center;
+  }
+  #disconnect-overlay.visible { display: flex; }
+  #disconnect-overlay h2 { color: #f44; font-size: 20px; text-shadow: 0 0 10px #f44; }
+  #disconnect-overlay p { color: #888; font-size: 12px; }
 </style>
 </head>
 <body>
+<script src="https://unpkg.com/[email protected]/dist/peerjs.min.js"></script>
 <canvas id="game"></canvas>
 <div id="ui-overlay" class="active">
   <div id="menu-title" class="menu visible">
@@ -82,12 +158,35 @@
     <p>Two ships. One shield. Shoot your opponent while the shield drifts between you.
     Don't let it pass you — or your enemy gets 2 seconds of cover.
     Best of 10 rounds. First to 6 wins.</p>
-    <p style="color:#666; font-size:11px;">
+    <p id="controls-hint" style="color:#666; font-size:11px;">
       P1: W/S or Mouse Wheel to move &bull; Click or Space to fire<br>
       P2: Up/Down arrows to move &bull; Enter to fire
     </p>
-    <button id="btn-start">LAUNCH</button>
+    <div class="btn-row">
+      <button id="btn-local">LOCAL PLAY</button>
+      <button id="btn-host" class="btn-secondary">HOST ONLINE</button>
+      <button id="btn-join" class="btn-secondary">JOIN ONLINE</button>
+    </div>
     <p style="color:#444; font-size:10px; margin-top:12px;">Developed &amp; Published by <span style="color:#0af;">anarchygames.org</span></p>
+  </div>
+  <div id="menu-host" class="menu">
+    <h1>IN THE BLACK</h1>
+    <h2>// HOST GAME //</h2>
+    <p>Share this room code with your opponent:</p>
+    <div id="host-code" class="room-code">----</div>
+    <p class="status-text" id="host-status">Waiting for opponent...</p>
+    <button id="btn-host-cancel" class="btn-cancel">CANCEL</button>
+  </div>
+  <div id="menu-join" class="menu">
+    <h1>IN THE BLACK</h1>
+    <h2>// JOIN GAME //</h2>
+    <p>Enter the 4-character room code:</p>
+    <input type="text" id="join-code-input" class="room-input" maxlength="4" placeholder="CODE" autocomplete="off" spellcheck="false">
+    <p class="status-text" id="join-status" style="animation:none; opacity:1;">&nbsp;</p>
+    <div class="btn-row">
+      <button id="btn-join-connect">CONNECT</button>
+      <button id="btn-join-cancel" class="btn-cancel">CANCEL</button>
+    </div>
   </div>
   <div id="menu-round" class="menu">
     <h2 id="round-text"></h2>
@@ -97,11 +196,16 @@
     <h1 id="win-text"></h1>
     <h2 id="win-ship"></h2>
     <p id="win-score"></p>
-    <div style="display:flex; gap:16px; margin-top:8px;">
+    <div id="win-buttons" style="display:flex; gap:16px; margin-top:8px;">
       <button id="btn-rematch">REMATCH</button>
       <button id="btn-exit" style="color:#f44; border-color:#f44;">EXIT</button>
     </div>
   </div>
+</div>
+<div id="disconnect-overlay">
+  <h2>CONNECTION LOST</h2>
+  <p id="disconnect-reason">Opponent disconnected.</p>
+  <button id="btn-disconnect-exit" style="font-family:'Codex',monospace; font-size:14px; padding:8px 24px; background:transparent; color:#f44; border:2px solid #f44; cursor:pointer; text-transform:uppercase; letter-spacing:2px;">EXIT TO MENU</button>
 </div>
 
 <script>
@@ -153,8 +257,8 @@ const BLACK_HOLE_DURATION_MIN = 12;
 const BLACK_HOLE_DURATION_MAX = 20;
 const BLACK_HOLE_PULL_MIN = 40;
 const BLACK_HOLE_PULL_MAX = 180;
-const BLACK_HOLE_BULLET_PULL_MIN = 20;
-const BLACK_HOLE_BULLET_PULL_MAX = 100;
+const BLACK_HOLE_BULLET_PULL_MIN = 120;
+const BLACK_HOLE_BULLET_PULL_MAX = 350;
 const BLACK_HOLE_RADIUS = 18;
 
 // Overclock
@@ -197,6 +301,165 @@ const BG_PATHS = [
 let activeBg = null;
 let bgScrollX = 0;
 const BG_SCROLL_SPEED = 12; // pixels per second
+
+// --- Audio System ---
+const MUSIC_TRACKS = [
+  'assets/music/orbital-daydream.mp3',
+  'assets/music/orbital-daydream-2.mp3',
+  'assets/music/starlight-save-point.mp3',
+  'assets/music/starlight-save-point-2.mp3',
+  'assets/music/starlight-save-point-3.mp3',
+  'assets/music/starlight-save-point-4.mp3',
+  'assets/music/starlight-save-point-5.mp3',
+  'assets/music/starlight-save-point-alt.mp3',
+  'assets/music/starlight-save-point-mashup.mp3',
+  'assets/music/zero-gravity-save-point.mp3',
+  'assets/music/zero-gravity-save-point-2.mp3',
+];
+
+const audio = {
+  unlocked: false,
+  musicVolume: 0.35,
+  sfxVolume: 0.5,
+  music: null,
+  musicIndex: -1,
+  shuffled: [],
+  phaserPool: [],
+  phaserPoolSize: 6,
+  explosionPool: [],
+  explosionPoolSize: 3,
+  thrusterP1: null,
+  thrusterP2: null,
+  thrusterP1Playing: false,
+  thrusterP2Playing: false,
+};
+
+// Shuffle music playlist (Fisher-Yates)
+function shufflePlaylist() {
+  audio.shuffled = [...MUSIC_TRACKS];
+  for (let i = audio.shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [audio.shuffled[i], audio.shuffled[j]] = [audio.shuffled[j], audio.shuffled[i]];
+  }
+  audio.musicIndex = 0;
+}
+
+function initAudio() {
+  if (audio.unlocked) return;
+  audio.unlocked = true;
+
+  // Music player
+  audio.music = new Audio();
+  audio.music.volume = audio.musicVolume;
+  audio.music.addEventListener('ended', playNextTrack);
+  shufflePlaylist();
+
+  // Phaser SFX pool (for overlapping shots)
+  for (let i = 0; i < audio.phaserPoolSize; i++) {
+    const a = new Audio('assets/sfx/phaser.mp3');
+    a.volume = audio.sfxVolume;
+    audio.phaserPool.push(a);
+  }
+
+  // Explosion SFX pool
+  for (let i = 0; i < audio.explosionPoolSize; i++) {
+    const a = new Audio('assets/sfx/explosion.mp3');
+    a.volume = audio.sfxVolume;
+    audio.explosionPool.push(a);
+  }
+
+  // Thruster loops
+  audio.thrusterP1 = new Audio('assets/sfx/thruster.mp3');
+  audio.thrusterP1.loop = true;
+  audio.thrusterP1.volume = 0;
+  audio.thrusterP2 = new Audio('assets/sfx/thruster.mp3');
+  audio.thrusterP2.loop = true;
+  audio.thrusterP2.volume = 0;
+}
+
+function playNextTrack() {
+  if (!audio.music || !audio.unlocked) return;
+  if (audio.musicIndex >= audio.shuffled.length) {
+    shufflePlaylist(); // reshuffle when all played
+  }
+  audio.music.src = audio.shuffled[audio.musicIndex];
+  audio.music.volume = audio.musicVolume;
+  audio.musicIndex++;
+  audio.music.play().catch(() => {});
+}
+
+function startMusic() {
+  if (!audio.unlocked) return;
+  shufflePlaylist();
+  playNextTrack();
+}
+
+function stopMusic() {
+  if (!audio.music) return;
+  audio.music.pause();
+  audio.music.currentTime = 0;
+}
+
+function playPhaser() {
+  if (!audio.unlocked) return;
+  // Find a free slot in the pool (one that's ended or not playing)
+  for (const a of audio.phaserPool) {
+    if (a.paused || a.ended) {
+      a.currentTime = 0;
+      a.volume = audio.sfxVolume;
+      a.play().catch(() => {});
+      return;
+    }
+  }
+  // All busy — steal the oldest one
+  const a = audio.phaserPool[0];
+  a.currentTime = 0;
+  a.volume = audio.sfxVolume;
+  a.play().catch(() => {});
+}
+
+function playExplosion() {
+  if (!audio.unlocked) return;
+  const vol = audio.sfxVolume * 0.45; // quieter than phaser
+  for (const a of audio.explosionPool) {
+    if (a.paused || a.ended) {
+      a.currentTime = 0;
+      a.volume = vol;
+      a.play().catch(() => {});
+      return;
+    }
+  }
+  const a = audio.explosionPool[0];
+  a.currentTime = 0;
+  a.volume = vol;
+  a.play().catch(() => {});
+}
+
+const THRUSTER_VOLUME_TARGET = 0.25;
+const THRUSTER_FADE_SPEED = 8; // per second
+
+function updateThrusters(dt) {
+  if (!audio.unlocked) return;
+  updateThruster(audio.thrusterP1, audio.thrusterP1Playing, dt);
+  updateThruster(audio.thrusterP2, audio.thrusterP2Playing, dt);
+}
+
+function updateThruster(thruster, shouldPlay, dt) {
+  if (!thruster) return;
+  const targetVol = shouldPlay ? THRUSTER_VOLUME_TARGET * audio.sfxVolume : 0;
+  const diff = targetVol - thruster.volume;
+  if (Math.abs(diff) < 0.005) {
+    thruster.volume = targetVol;
+  } else {
+    thruster.volume = Math.max(0, Math.min(1, thruster.volume + Math.sign(diff) * THRUSTER_FADE_SPEED * dt));
+  }
+  if (shouldPlay && thruster.paused) {
+    thruster.play().catch(() => {});
+  } else if (thruster.volume === 0 && !thruster.paused) {
+    thruster.pause();
+    thruster.currentTime = 0;
+  }
+}
 
 // --- Utility ---
 function randRange(min, max) {
@@ -467,6 +730,7 @@ const game = {
   scores: [0, 0],
   roundWinner: -1,
   flashTimers: [0, 0],
+  explosions: [],
 
   // Modifier system
   modifiers: {
@@ -477,6 +741,26 @@ const game = {
     blackHole: null,
     overclock: null,
   },
+};
+
+// --- Networking state ---
+const net = {
+  mode: 'local',       // 'local' | 'host' | 'client'
+  peer: null,
+  conn: null,
+  roomCode: '',
+  connected: false,
+  remoteInput: { up: false, down: false, fire: false, fireOnce: false, mouseWheelDelta: 0 },
+  stateBuffer: [],     // ring buffer of 3 recent state snapshots for interpolation
+  tickRate: 50,        // ms between state broadcasts (20Hz)
+  inputRate: 16,       // ms between input sends (~60Hz)
+  lastStateSend: 0,
+  lastInputSend: 0,
+  pingInterval: null,
+  pingSentAt: 0,
+  latency: 0,
+  hostTimeout: null,
+  clientTimeout: null,
 };
 
 function createPlayer(id) {
@@ -516,6 +800,7 @@ function resetRound() {
   game.shield = createShield();
   game.bullets = [];
   game.flashTimers = [0, 0];
+  game.explosions = [];
   game.state = 'countdown';
   game.countdownTimer = 2.0;
   // NOTE: modifiers persist across rounds — only reset on new match
@@ -550,9 +835,9 @@ document.addEventListener('keydown', (e) => {
     case 'KeyW': input.p1Up = true; break;
     case 'KeyS': input.p1Down = true; break;
     case 'Space': e.preventDefault(); input.p1Fire = true; input.p1FireOnce = true; break;
-    case 'ArrowUp': e.preventDefault(); input.p2Up = true; break;
-    case 'ArrowDown': e.preventDefault(); input.p2Down = true; break;
-    case 'Enter': input.p2Fire = true; input.p2FireOnce = true; break;
+    case 'ArrowUp': e.preventDefault(); if (net.mode === 'local') input.p2Up = true; break;
+    case 'ArrowDown': e.preventDefault(); if (net.mode === 'local') input.p2Down = true; break;
+    case 'Enter': if (net.mode === 'local') { input.p2Fire = true; input.p2FireOnce = true; } break;
   }
 });
 document.addEventListener('keyup', (e) => {
@@ -560,9 +845,9 @@ document.addEventListener('keyup', (e) => {
     case 'KeyW': input.p1Up = false; break;
     case 'KeyS': input.p1Down = false; break;
     case 'Space': input.p1Fire = false; break;
-    case 'ArrowUp': input.p2Up = false; break;
-    case 'ArrowDown': input.p2Down = false; break;
-    case 'Enter': input.p2Fire = false; break;
+    case 'ArrowUp': if (net.mode === 'local') input.p2Up = false; break;
+    case 'ArrowDown': if (net.mode === 'local') input.p2Down = false; break;
+    case 'Enter': if (net.mode === 'local') input.p2Fire = false; break;
   }
 });
 
@@ -610,6 +895,7 @@ function fireBullet(player) {
     vy: 0,
     owner: player.id,
   });
+  playPhaser();
 }
 
 // ============================================================
@@ -643,8 +929,12 @@ function spawnModifier() {
       break;
     }
     case 'blackHole': {
-      const bx = randRange(NATIVE_W * 0.2, NATIVE_W * 0.8);
-      const by = randRange(NATIVE_H * 0.15, NATIVE_H * 0.85);
+      const bx = randRange(NATIVE_W * 0.25, NATIVE_W * 0.75);
+      // Spawn near top or bottom edge so pull direction is obvious
+      const isTop = Math.random() < 0.5;
+      const by = isTop
+        ? randRange(BLACK_HOLE_RADIUS + 6, NATIVE_H * 0.15)
+        : randRange(NATIVE_H * 0.85, NATIVE_H - BLACK_HOLE_RADIUS - 6);
       const duration = randRange(BLACK_HOLE_DURATION_MIN, BLACK_HOLE_DURATION_MAX);
       const pullStrength = randRange(BLACK_HOLE_PULL_MIN, BLACK_HOLE_PULL_MAX);
       const bulletPull = randRange(BLACK_HOLE_BULLET_PULL_MIN, BLACK_HOLE_BULLET_PULL_MAX);
@@ -656,8 +946,8 @@ function spawnModifier() {
         angle: 0,
       };
       game.modifiers.active = { type: 'blackHole' };
-      const intensity = pullStrength > (BLACK_HOLE_PULL_MIN + BLACK_HOLE_PULL_MAX) / 2 ? 'STRONG' : 'WEAK';
-      game.modifiers.announcement = { text: `BLACK HOLE — ${intensity}`, timer: MOD_ANNOUNCE_TIME };
+      const dir = isTop ? 'PULL UP' : 'PULL DOWN';
+      game.modifiers.announcement = { text: `BLACK HOLE — ${dir}`, timer: MOD_ANNOUNCE_TIME };
       break;
     }
     case 'overclock': {
@@ -854,6 +1144,16 @@ function update(dt) {
   let p2Move = 0;
   if (input.p2Up) p2Move -= 1;
   if (input.p2Down) p2Move += 1;
+  // In host mode, also handle remote player's mouse wheel for P2
+  if (net.mode === 'host' && net.remoteInput.mouseWheelDelta) {
+    const mw = net.remoteInput.mouseWheelDelta;
+    if (Math.abs(mw) > 2) {
+      p2Move += Math.sign(mw) * Math.min(Math.abs(mw) / 30, 1);
+      net.remoteInput.mouseWheelDelta *= 0.7;
+    } else {
+      net.remoteInput.mouseWheelDelta = 0;
+    }
+  }
   p2.y += p2Move * SHIP_SPEED * speedMult * dt;
   p2.y = Math.max(0, Math.min(NATIVE_H - p2.h, p2.y));
 
@@ -961,10 +1261,120 @@ function update(dt) {
   game.flashTimers[1] = Math.max(0, game.flashTimers[1] - dt);
 }
 
+// --- Explosion particle system ---
+function spawnExplosion(cx, cy, playerId) {
+  const colors = playerId === 0
+    ? ['#0af', '#0cf', '#08f', '#fff', '#4df', '#06a']
+    : ['#f44', '#f80', '#fa0', '#fff', '#f66', '#c22'];
+  const particles = [];
+  const count = 28 + Math.floor(Math.random() * 12); // 28-40 particles
+
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 30 + Math.random() * 120;
+    const size = 1 + Math.random() * 3;
+    particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      size,
+      color: colors[Math.floor(Math.random() * colors.length)],
+      life: 0.6 + Math.random() * 0.6,  // 0.6 - 1.2s
+      maxLife: 0,
+    });
+    particles[particles.length - 1].maxLife = particles[particles.length - 1].life;
+  }
+
+  // Add a few larger "chunk" particles
+  for (let i = 0; i < 6; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 20 + Math.random() * 60;
+    particles.push({
+      x: cx, y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      size: 3 + Math.random() * 3,
+      color: colors[Math.floor(Math.random() * 2)], // ship colors
+      life: 0.8 + Math.random() * 0.5,
+      maxLife: 0,
+    });
+    particles[particles.length - 1].maxLife = particles[particles.length - 1].life;
+  }
+
+  game.explosions.push({
+    particles,
+    timer: 1.5,      // total effect duration
+    cx, cy,           // center for flash
+    flashTimer: 0.15, // bright flash duration
+  });
+}
+
+function updateExplosions(dt) {
+  for (let e = game.explosions.length - 1; e >= 0; e--) {
+    const exp = game.explosions[e];
+    exp.timer -= dt;
+    exp.flashTimer -= dt;
+
+    for (let i = exp.particles.length - 1; i >= 0; i--) {
+      const p = exp.particles[i];
+      p.life -= dt;
+      if (p.life <= 0) {
+        exp.particles.splice(i, 1);
+        continue;
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      // Drag
+      p.vx *= 0.97;
+      p.vy *= 0.97;
+    }
+
+    if (exp.timer <= 0 && exp.particles.length === 0) {
+      game.explosions.splice(e, 1);
+    }
+  }
+}
+
+function drawExplosions() {
+  for (const exp of game.explosions) {
+    // Initial bright flash
+    if (exp.flashTimer > 0) {
+      const flashAlpha = exp.flashTimer / 0.15;
+      ctx.save();
+      ctx.globalAlpha = flashAlpha * 0.6;
+      ctx.beginPath();
+      ctx.arc(exp.cx * scale, exp.cy * scale, 25 * scale, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.globalAlpha = flashAlpha * 0.3;
+      ctx.beginPath();
+      ctx.arc(exp.cx * scale, exp.cy * scale, 45 * scale, 0, Math.PI * 2);
+      ctx.fillStyle = '#fff';
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // Particles
+    for (const p of exp.particles) {
+      const alpha = Math.max(0, p.life / p.maxLife);
+      ctx.globalAlpha = alpha;
+      px(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size, p.color);
+    }
+    ctx.globalAlpha = 1.0;
+  }
+}
+
 function handleHit(hitPlayerId) {
   const scorerId = hitPlayerId === 0 ? 1 : 0;
   game.scores[scorerId]++;
   game.flashTimers[hitPlayerId] = 0.3;
+
+  // Spawn explosion at the destroyed ship's center
+  const hitPlayer = hitPlayerId === 0 ? game.p1 : game.p2;
+  if (hitPlayer) {
+    spawnExplosion(hitPlayer.x + hitPlayer.w / 2, hitPlayer.y + hitPlayer.h / 2, hitPlayerId);
+    playExplosion();
+  }
 
   const totalRounds = game.scores[0] + game.scores[1];
 
@@ -1190,7 +1600,7 @@ function draw(dt) {
     px(NATIVE_W / 2, y, 1, 4, '#1a1a2e');
   }
 
-  if (game.state === 'menu' || game.state === 'gameOver') return;
+  if (game.state === 'menu') return;
 
   const p1 = game.p1;
   const p2 = game.p2;
@@ -1261,6 +1671,9 @@ function draw(dt) {
     }
   }
 
+  // Explosions (render on top of bullets)
+  drawExplosions();
+
   // HUD
   drawText(`P1: ${game.scores[0]}`, 60, 12, '#0af', 10);
   drawText(`P2: ${game.scores[1]}`, NATIVE_W - 60, 12, '#f44', 10);
@@ -1269,6 +1682,11 @@ function draw(dt) {
   drawGravityWellIndicator();
   drawOverclockIndicator();
   drawModifierAnnouncement();
+
+  // Ping display (online only)
+  if (net.mode !== 'local' && net.connected) {
+    drawText(`${net.latency}ms`, NATIVE_W / 2, NATIVE_H - 8, '#555', 7);
+  }
 
   // Countdown
   if (game.state === 'countdown') {
@@ -1280,32 +1698,109 @@ function draw(dt) {
 // --- UI ---
 const overlay = document.getElementById('ui-overlay');
 const menuTitle = document.getElementById('menu-title');
+const menuHost = document.getElementById('menu-host');
+const menuJoin = document.getElementById('menu-join');
 const menuRound = document.getElementById('menu-round');
 const menuWin = document.getElementById('menu-win');
-
-document.getElementById('btn-start').addEventListener('click', () => {
-  hideAllMenus();
-  resetMatch();
-});
-
-document.getElementById('btn-rematch').addEventListener('click', () => {
-  hideAllMenus();
-  resetMatch();
-});
-
-document.getElementById('btn-exit').addEventListener('click', () => {
-  hideAllMenus();
-  game.state = 'menu';
-  menuTitle.classList.add('visible');
-  overlay.classList.add('active');
-});
+const disconnectOverlay = document.getElementById('disconnect-overlay');
 
 function hideAllMenus() {
   menuTitle.classList.remove('visible');
+  menuHost.classList.remove('visible');
+  menuJoin.classList.remove('visible');
   menuRound.classList.remove('visible');
   menuWin.classList.remove('visible');
   overlay.classList.remove('active');
+  disconnectOverlay.classList.remove('visible');
 }
+
+function showMenu(menuEl) {
+  hideAllMenus();
+  menuEl.classList.add('visible');
+  overlay.classList.add('active');
+}
+
+function returnToTitle() {
+  netCleanup();
+  stopMusic();
+  stopThrusters();
+  hideAllMenus();
+  game.state = 'menu';
+  showMenu(menuTitle);
+}
+
+function stopThrusters() {
+  audio.thrusterP1Playing = false;
+  audio.thrusterP2Playing = false;
+  if (audio.thrusterP1) { audio.thrusterP1.pause(); audio.thrusterP1.volume = 0; }
+  if (audio.thrusterP2) { audio.thrusterP2.pause(); audio.thrusterP2.volume = 0; }
+}
+
+// --- LOCAL PLAY ---
+document.getElementById('btn-local').addEventListener('click', () => {
+  initAudio();
+  net.mode = 'local';
+  hideAllMenus();
+  resetMatch();
+  startMusic();
+});
+
+// --- HOST ONLINE ---
+document.getElementById('btn-host').addEventListener('click', () => {
+  initAudio();
+  showMenu(menuHost);
+  startHost();
+});
+
+document.getElementById('btn-host-cancel').addEventListener('click', () => {
+  returnToTitle();
+});
+
+// --- JOIN ONLINE ---
+document.getElementById('btn-join').addEventListener('click', () => {
+  initAudio();
+  showMenu(menuJoin);
+  document.getElementById('join-code-input').value = '';
+  document.getElementById('join-status').innerHTML = '&nbsp;';
+  setTimeout(() => document.getElementById('join-code-input').focus(), 100);
+});
+
+document.getElementById('btn-join-connect').addEventListener('click', () => {
+  const code = document.getElementById('join-code-input').value.toUpperCase().trim();
+  if (code.length !== 4) {
+    document.getElementById('join-status').textContent = 'Enter a 4-character code';
+    return;
+  }
+  startClient(code);
+});
+
+// Allow Enter key to submit join code
+document.getElementById('join-code-input').addEventListener('keydown', (e) => {
+  if (e.code === 'Enter') {
+    e.preventDefault();
+    document.getElementById('btn-join-connect').click();
+  }
+});
+
+document.getElementById('btn-join-cancel').addEventListener('click', () => {
+  returnToTitle();
+});
+
+// --- WIN SCREEN ---
+document.getElementById('btn-rematch').addEventListener('click', () => {
+  hideAllMenus();
+  resetMatch();
+  startMusic();
+});
+
+document.getElementById('btn-exit').addEventListener('click', () => {
+  returnToTitle();
+});
+
+// --- DISCONNECT OVERLAY ---
+document.getElementById('btn-disconnect-exit').addEventListener('click', () => {
+  returnToTitle();
+});
 
 function showRoundScreen(scorer) {
   const totalRounds = game.scores[0] + game.scores[1];
@@ -1327,28 +1822,514 @@ function showWinScreen(winner) {
   document.getElementById('win-text').textContent = `PLAYER ${winner + 1} WINS!`;
   document.getElementById('win-ship').textContent = `Final Form: ${tierNames[Math.min(game.scores[winner], 9)]}`;
   document.getElementById('win-score').textContent = `Final Score: P1 ${game.scores[0]} — P2 ${game.scores[1]}`;
+
+  // In online mode: EXIT only (no rematch)
+  const rematchBtn = document.getElementById('btn-rematch');
+  if (net.mode !== 'local') {
+    rematchBtn.style.display = 'none';
+  } else {
+    rematchBtn.style.display = '';
+  }
+
   menuWin.classList.add('visible');
   overlay.classList.add('active');
 }
 
-// --- Game loop ---
+function showDisconnect(reason) {
+  document.getElementById('disconnect-reason').textContent = reason || 'Opponent disconnected.';
+  disconnectOverlay.classList.add('visible');
+}
+
+// ============================================================
+// NETWORKING — PeerJS WebRTC P2P
+// ============================================================
+
+const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/1/O/0
+
+function generateRoomCode() {
+  let code = '';
+  for (let i = 0; i < 4; i++) code += ROOM_CHARS[Math.floor(Math.random() * ROOM_CHARS.length)];
+  return code;
+}
+
+function netCleanup() {
+  if (net.pingInterval) { clearInterval(net.pingInterval); net.pingInterval = null; }
+  if (net.hostTimeout) { clearTimeout(net.hostTimeout); net.hostTimeout = null; }
+  if (net.clientTimeout) { clearTimeout(net.clientTimeout); net.clientTimeout = null; }
+  if (net.conn) { try { net.conn.close(); } catch(e) {} net.conn = null; }
+  if (net.peer) { try { net.peer.destroy(); } catch(e) {} net.peer = null; }
+  net.connected = false;
+  net.mode = 'local';
+  net.roomCode = '';
+  net.stateBuffer = [];
+  net.latency = 0;
+  net.remoteInput = { up: false, down: false, fire: false, fireOnce: false, mouseWheelDelta: 0 };
+}
+
+function setupConnection(conn) {
+  net.conn = conn;
+
+  conn.on('data', (data) => {
+    handleNetMessage(data);
+  });
+
+  conn.on('close', () => {
+    if (net.connected) {
+      net.connected = false;
+      showDisconnect('Opponent disconnected.');
+    }
+  });
+
+  conn.on('error', (err) => {
+    console.error('Connection error:', err);
+    net.connected = false;
+    showDisconnect('Connection error.');
+  });
+}
+
+function handleNetMessage(data) {
+  switch (data.t) {
+    case 'start':
+      // Client receives start signal from host
+      net.connected = true;
+      hideAllMenus();
+      net.mode = 'client';
+      resetMatch();
+      startMusic();
+      break;
+
+    case 'state':
+      // Client receives game state from host
+      if (net.mode === 'client') {
+        applyStateSnapshot(data);
+      }
+      break;
+
+    case 'input':
+      // Host receives input from client
+      if (net.mode === 'host') {
+        net.remoteInput.up = data.u;
+        net.remoteInput.down = data.d;
+        net.remoteInput.fire = data.f;
+        if (data.fo) net.remoteInput.fireOnce = true;
+        net.remoteInput.mouseWheelDelta = data.mw || 0;
+      }
+      break;
+
+    case 'ping':
+      // Respond to ping with pong
+      if (net.conn && net.conn.open) {
+        net.conn.send({ t: 'pong', ts: data.ts });
+      }
+      break;
+
+    case 'pong':
+      // Calculate latency from pong response
+      net.latency = Math.round((performance.now() - data.ts) / 2);
+      break;
+  }
+}
+
+// --- HOST FLOW ---
+function startHost() {
+  const code = generateRoomCode();
+  net.roomCode = code;
+  document.getElementById('host-code').textContent = code;
+  document.getElementById('host-status').textContent = 'Waiting for opponent...';
+
+  const peer = new Peer('ITB-' + code, { debug: 0 });
+  net.peer = peer;
+
+  peer.on('open', () => {
+    document.getElementById('host-status').textContent = 'Room open. Waiting for opponent...';
+
+    // 60s timeout
+    net.hostTimeout = setTimeout(() => {
+      if (!net.connected) {
+        document.getElementById('host-status').textContent = 'Timed out. No opponent joined.';
+        setTimeout(() => returnToTitle(), 2000);
+      }
+    }, 60000);
+  });
+
+  peer.on('connection', (conn) => {
+    if (net.hostTimeout) { clearTimeout(net.hostTimeout); net.hostTimeout = null; }
+
+    setupConnection(conn);
+
+    conn.on('open', () => {
+      net.mode = 'host';
+      net.connected = true;
+
+      // Tell client to start
+      conn.send({ t: 'start' });
+
+      hideAllMenus();
+      resetMatch();
+      startMusic();
+      startPingInterval();
+    });
+  });
+
+  peer.on('error', (err) => {
+    console.error('Peer error:', err);
+    if (err.type === 'unavailable-id') {
+      document.getElementById('host-status').textContent = 'Room code taken. Try again.';
+      setTimeout(() => {
+        if (net.peer) { try { net.peer.destroy(); } catch(e) {} net.peer = null; }
+        startHost();
+      }, 1000);
+    } else {
+      document.getElementById('host-status').textContent = 'Connection error. Try again.';
+    }
+  });
+}
+
+// --- CLIENT FLOW ---
+function startClient(code) {
+  document.getElementById('join-status').textContent = 'Connecting...';
+  document.getElementById('join-status').style.animation = 'pulse 1.5s ease-in-out infinite';
+
+  const peer = new Peer(undefined, { debug: 0 });
+  net.peer = peer;
+  net.roomCode = code;
+
+  peer.on('open', () => {
+    const conn = peer.connect('ITB-' + code, { reliable: true });
+
+    // 10s connection timeout
+    net.clientTimeout = setTimeout(() => {
+      if (!net.connected) {
+        document.getElementById('join-status').textContent = 'Could not connect. Check the code.';
+        document.getElementById('join-status').style.animation = 'none';
+        if (net.peer) { try { net.peer.destroy(); } catch(e) {} net.peer = null; }
+      }
+    }, 10000);
+
+    setupConnection(conn);
+
+    conn.on('open', () => {
+      if (net.clientTimeout) { clearTimeout(net.clientTimeout); net.clientTimeout = null; }
+      document.getElementById('join-status').textContent = 'Connected! Starting...';
+      startPingInterval();
+      // Wait for 'start' message from host (handled in handleNetMessage)
+    });
+  });
+
+  peer.on('error', (err) => {
+    console.error('Peer error:', err);
+    document.getElementById('join-status').textContent = 'Connection failed. Check the code.';
+    document.getElementById('join-status').style.animation = 'none';
+  });
+}
+
+function startPingInterval() {
+  if (net.pingInterval) clearInterval(net.pingInterval);
+  net.pingInterval = setInterval(() => {
+    if (net.conn && net.conn.open) {
+      net.conn.send({ t: 'ping', ts: performance.now() });
+    }
+  }, 2000);
+}
+
+// ============================================================
+// STATE SYNC (Host → Client @ 20Hz)
+// ============================================================
+
+function serializeState() {
+  const p1 = game.p1;
+  const p2 = game.p2;
+  const s = game.shield;
+  const mods = game.modifiers;
+
+  const state = {
+    t: 'state',
+    gs: game.state,
+    ct: game.countdownTimer,
+    sc: game.scores,
+    ft: game.flashTimers,
+    rw: game.roundWinner,
+    p1: p1 ? { x: p1.x, y: p1.y, w: p1.w, h: p1.h, vy: p1.vy, fc: p1.fireCooldown, a: p1.alive } : null,
+    p2: p2 ? { x: p2.x, y: p2.y, w: p2.w, h: p2.h, vy: p2.vy, fc: p2.fireCooldown, a: p2.alive } : null,
+    sh: s ? { x: s.x, y: s.y, vx: s.vx, vy: s.vy, l: s.locked, lt: s.lockTimer, ls: s.lockSide, ct: s.colorTime } : null,
+    bl: game.bullets.map(b => ({ x: b.x, y: b.y, vx: b.vx, vy: b.vy, o: b.owner })),
+    ma: mods.active ? mods.active.type : null,
+    ann: mods.announcement ? { text: mods.announcement.text, timer: mods.announcement.timer } : null,
+    gw: mods.gravityWell ? {
+      sm: mods.gravityWell.speedMultiplier,
+      ti: mods.gravityWell.timer,
+      md: mods.gravityWell.maxDuration,
+      is: mods.gravityWell.isSlow
+    } : null,
+    bh: mods.blackHole ? {
+      x: mods.blackHole.x, y: mods.blackHole.y,
+      ps: mods.blackHole.pullStrength,
+      bp: mods.blackHole.bulletPull,
+      ti: mods.blackHole.timer,
+      md: mods.blackHole.maxDuration,
+      an: mods.blackHole.angle
+    } : null,
+    oc: mods.overclock ? {
+      fm: mods.overclock.fireMultiplier,
+      ti: mods.overclock.timer,
+      md: mods.overclock.maxDuration,
+      db: mods.overclock.debuff,
+      dt: mods.overclock.debuffTimer,
+      dmd: mods.overclock.debuffMaxDuration,
+      dp: mods.overclock.debuffPattern
+    } : null,
+  };
+  return state;
+}
+
+function applyStateSnapshot(state) {
+  // Push into ring buffer for interpolation
+  net.stateBuffer.push({ time: performance.now(), state });
+  if (net.stateBuffer.length > 3) net.stateBuffer.shift();
+
+  // Always apply latest state directly for game logic
+  applyState(state);
+}
+
+function applyState(s) {
+  // Detect score changes to spawn explosions on client
+  if (net.mode === 'client') {
+    const oldTotal = game.scores[0] + game.scores[1];
+    const newTotal = s.sc[0] + s.sc[1];
+    if (newTotal > oldTotal) {
+      // Someone scored — figure out who got hit
+      const hitId = s.sc[0] > game.scores[0] ? 1 : 0;
+      const hitPlayer = hitId === 0 ? game.p1 : game.p2;
+      if (hitPlayer) {
+        spawnExplosion(hitPlayer.x + hitPlayer.w / 2, hitPlayer.y + hitPlayer.h / 2, hitId);
+        playExplosion();
+      }
+    }
+  }
+
+  game.state = s.gs;
+  game.countdownTimer = s.ct;
+  game.scores = s.sc;
+  game.flashTimers = s.ft;
+  game.roundWinner = s.rw;
+
+  if (s.p1 && game.p1) {
+    game.p1.x = s.p1.x; game.p1.w = s.p1.w; game.p1.h = s.p1.h;
+    game.p1.vy = s.p1.vy; game.p1.fireCooldown = s.p1.fc; game.p1.alive = s.p1.a;
+    // Interpolate y position
+    game.p1._targetY = s.p1.y;
+    if (game.p1._targetY !== undefined) {
+      game.p1.y = lerp(game.p1.y, game.p1._targetY, 0.4);
+    }
+  } else if (s.p1) {
+    game.p1 = { id: 0, x: s.p1.x, y: s.p1.y, w: s.p1.w, h: s.p1.h, vy: s.p1.vy, fireCooldown: s.p1.fc, alive: s.p1.a };
+  }
+
+  if (s.p2 && game.p2) {
+    game.p2.x = s.p2.x; game.p2.w = s.p2.w; game.p2.h = s.p2.h;
+    game.p2.vy = s.p2.vy; game.p2.fireCooldown = s.p2.fc; game.p2.alive = s.p2.a;
+    game.p2._targetY = s.p2.y;
+    if (game.p2._targetY !== undefined) {
+      game.p2.y = lerp(game.p2.y, game.p2._targetY, 0.4);
+    }
+  } else if (s.p2) {
+    game.p2 = { id: 1, x: s.p2.x, y: s.p2.y, w: s.p2.w, h: s.p2.h, vy: s.p2.vy, fireCooldown: s.p2.fc, alive: s.p2.a };
+  }
+
+  if (s.sh) {
+    if (!game.shield) game.shield = createShield();
+    const sh = game.shield;
+    sh.x = s.sh.x; sh.y = s.sh.y; sh.vx = s.sh.vx; sh.vy = s.sh.vy;
+    sh.locked = s.sh.l; sh.lockTimer = s.sh.lt; sh.lockSide = s.sh.ls; sh.colorTime = s.sh.ct;
+  }
+
+  // Bullets — direct apply (no interpolation needed, they move fast)
+  // Client: play phaser SFX when new bullets appear
+  if (net.mode === 'client' && s.bl.length > game.bullets.length) {
+    const newCount = s.bl.length - game.bullets.length;
+    for (let i = 0; i < Math.min(newCount, 3); i++) playPhaser();
+  }
+  game.bullets = s.bl.map(b => ({ x: b.x, y: b.y, w: BULLET_W, h: BULLET_H, vx: b.vx, vy: b.vy, owner: b.o }));
+
+  // Modifiers
+  game.modifiers.active = s.ma ? { type: s.ma } : null;
+  game.modifiers.announcement = s.ann ? { text: s.ann.text, timer: s.ann.timer } : null;
+
+  if (s.gw) {
+    game.modifiers.gravityWell = {
+      speedMultiplier: s.gw.sm, timer: s.gw.ti, maxDuration: s.gw.md, isSlow: s.gw.is
+    };
+  } else {
+    game.modifiers.gravityWell = null;
+  }
+
+  if (s.bh) {
+    game.modifiers.blackHole = {
+      x: s.bh.x, y: s.bh.y, pullStrength: s.bh.ps, bulletPull: s.bh.bp,
+      timer: s.bh.ti, maxDuration: s.bh.md, angle: s.bh.an
+    };
+  } else {
+    game.modifiers.blackHole = null;
+  }
+
+  if (s.oc) {
+    game.modifiers.overclock = {
+      fireMultiplier: s.oc.fm, timer: s.oc.ti, maxDuration: s.oc.md,
+      debuff: s.oc.db, debuffTimer: s.oc.dt, debuffMaxDuration: s.oc.dmd,
+      debuffPattern: s.oc.dp
+    };
+  } else {
+    game.modifiers.overclock = null;
+  }
+
+  // Handle UI for state transitions from host
+  if (s.gs === 'roundEnd' && game._lastState !== 'roundEnd') {
+    showRoundScreen(s.rw);
+  }
+  if (s.gs === 'gameOver' && game._lastState !== 'gameOver') {
+    showWinScreen(s.rw);
+  }
+  game._lastState = s.gs;
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+// ============================================================
+// INPUT FORWARDING (Client → Host @ 60Hz)
+// ============================================================
+
+function sendClientInput() {
+  if (!net.conn || !net.conn.open || net.mode !== 'client') return;
+
+  // Client uses P1 controls (WASD/mouse/space) mapped as their input
+  net.conn.send({
+    t: 'input',
+    u: input.p1Up,
+    d: input.p1Down,
+    f: input.p1Fire,
+    fo: input.p1FireOnce,
+    mw: input.mouseWheelDelta,
+  });
+
+  // Consume fireOnce after sending
+  input.p1FireOnce = false;
+}
+
+function broadcastState() {
+  if (!net.conn || !net.conn.open || net.mode !== 'host') return;
+  net.conn.send(serializeState());
+}
+
+// ============================================================
+// GAME LOOP (modified for net modes)
+// ============================================================
+
 let lastTime = 0;
 function loop(time) {
   const dt = Math.min((time - lastTime) / 1000, 0.05);
   lastTime = time;
-  update(dt);
+
+  if (net.mode === 'local') {
+    // Original local play — unchanged
+    update(dt);
+  } else if (net.mode === 'host') {
+    // Host: run full simulation, map remote input to P2
+    // Map remote client input to P2 controls
+    input.p2Up = net.remoteInput.up;
+    input.p2Down = net.remoteInput.down;
+    input.p2Fire = net.remoteInput.fire;
+    if (net.remoteInput.fireOnce) {
+      input.p2FireOnce = true;
+      net.remoteInput.fireOnce = false;
+    }
+    update(dt);
+
+    // Broadcast state at tick rate
+    const now = performance.now();
+    if (now - net.lastStateSend >= net.tickRate) {
+      broadcastState();
+      net.lastStateSend = now;
+    }
+  } else if (net.mode === 'client') {
+    // Client: skip update(), interpolate positions smoothly
+    // Send input at ~60Hz
+    const now = performance.now();
+    if (now - net.lastInputSend >= net.inputRate) {
+      sendClientInput();
+      net.lastInputSend = now;
+    }
+
+    // Client-side interpolation for smooth rendering
+    if (game.p1 && game.p1._targetY !== undefined) {
+      game.p1.y = lerp(game.p1.y, game.p1._targetY, 0.3);
+    }
+    if (game.p2 && game.p2._targetY !== undefined) {
+      game.p2.y = lerp(game.p2.y, game.p2._targetY, 0.3);
+    }
+
+    // Client-side prediction: locally move own ship (P2) based on own input for responsiveness
+    if (game.p2 && game.state === 'playing') {
+      let p2Move = 0;
+      if (input.p1Up) p2Move -= 1; // client uses P1 controls for their ship
+      if (input.p1Down) p2Move += 1;
+      if (Math.abs(input.mouseWheelDelta) > 2) {
+        p2Move += Math.sign(input.mouseWheelDelta) * Math.min(Math.abs(input.mouseWheelDelta) / 30, 1);
+        input.mouseWheelDelta *= 0.7;
+      } else {
+        input.mouseWheelDelta = 0;
+      }
+      if (p2Move !== 0) {
+        const speedMult = getEffectiveSpeedMultiplier();
+        game.p2.y += p2Move * SHIP_SPEED * speedMult * dt;
+        game.p2.y = Math.max(0, Math.min(NATIVE_H - game.p2.h, game.p2.y));
+        game.p2._targetY = game.p2.y; // override target so interpolation doesn't fight prediction
+      }
+    }
+
+    // Update shield colorTime locally for smooth animation
+    if (game.shield) game.shield.colorTime += dt;
+
+    // Update flash timers locally
+    game.flashTimers[0] = Math.max(0, game.flashTimers[0] - dt);
+    game.flashTimers[1] = Math.max(0, game.flashTimers[1] - dt);
+
+    // Update black hole angle locally for smooth animation
+    if (game.modifiers.blackHole) game.modifiers.blackHole.angle += dt * 2.5;
+  }
+
+  // --- Explosions (tick in all states so they play out during roundEnd/gameOver) ---
+  updateExplosions(dt);
+
+  // --- Thruster audio ---
+  if (game.state === 'playing') {
+    if (net.mode === 'local') {
+      audio.thrusterP1Playing = input.p1Up || input.p1Down || Math.abs(input.mouseWheelDelta) > 2;
+      audio.thrusterP2Playing = input.p2Up || input.p2Down;
+    } else if (net.mode === 'host') {
+      audio.thrusterP1Playing = input.p1Up || input.p1Down || Math.abs(input.mouseWheelDelta) > 2;
+      audio.thrusterP2Playing = net.remoteInput.up || net.remoteInput.down || Math.abs(net.remoteInput.mouseWheelDelta) > 2;
+    } else if (net.mode === 'client') {
+      // Client only hears own thruster (P2 ship, using P1 controls)
+      audio.thrusterP1Playing = false;
+      audio.thrusterP2Playing = input.p1Up || input.p1Down || Math.abs(input.mouseWheelDelta) > 2;
+    }
+  } else {
+    audio.thrusterP1Playing = false;
+    audio.thrusterP2Playing = false;
+  }
+  updateThrusters(dt);
+
   draw(dt);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame((t) => { lastTime = t; requestAnimationFrame(loop); });
 
-// ===========================================================
-// MULTIPLAYER INTEGRATION HOOKS
-// ===========================================================
-// game object is globally accessible for serialization.
-// Modifier state is included in game.modifiers for sync.
-// See MULTIPLAYER.md for integration spec.
-// ===========================================================
+// --- Tab close cleanup ---
+window.addEventListener('beforeunload', () => {
+  if (net.peer) { try { net.peer.destroy(); } catch(e) {} }
+});
 
 </script>
 </body>
