@@ -167,6 +167,7 @@
       <button id="btn-host" class="btn-secondary">HOST ONLINE</button>
       <button id="btn-join" class="btn-secondary">JOIN ONLINE</button>
     </div>
+    <a href="tutorial.html" style="color:#666; font-size:11px; text-decoration:none; letter-spacing:2px; margin-top:4px; transition:color 0.2s;" onmouseover="this.style.color='#0ff'" onmouseout="this.style.color='#666'">HOW TO PLAY</a>
     <p style="color:#444; font-size:10px; margin-top:12px;">Developed &amp; Published by <span style="color:#0af;">anarchygames.org</span></p>
   </div>
   <div id="menu-host" class="menu">
@@ -300,7 +301,7 @@ const BG_PATHS = [
 })();
 let activeBg = null;
 let bgScrollX = 0;
-const BG_SCROLL_SPEED = 12; // pixels per second
+const BG_SCROLL_SPEED = 6; // pixels per second
 
 // --- Audio System ---
 const MUSIC_TRACKS = [
@@ -326,8 +327,12 @@ const audio = {
   shuffled: [],
   phaserPool: [],
   phaserPoolSize: 6,
+  blasterAltPool: [],
+  blasterAltPoolSize: 6,
   explosionPool: [],
   explosionPoolSize: 3,
+  shieldImpactPool: [],
+  shieldImpactPoolSize: 3,
   thrusterP1: null,
   thrusterP2: null,
   thrusterP1Playing: false,
@@ -361,11 +366,25 @@ function initAudio() {
     audio.phaserPool.push(a);
   }
 
+  // P2 blaster SFX pool (alternate blaster sound)
+  for (let i = 0; i < audio.blasterAltPoolSize; i++) {
+    const a = new Audio('assets/sfx/blaster-alt.mp3');
+    a.volume = audio.sfxVolume;
+    audio.blasterAltPool.push(a);
+  }
+
   // Explosion SFX pool
   for (let i = 0; i < audio.explosionPoolSize; i++) {
     const a = new Audio('assets/sfx/explosion.mp3');
     a.volume = audio.sfxVolume;
     audio.explosionPool.push(a);
+  }
+
+  // Shield impact SFX pool
+  for (let i = 0; i < audio.shieldImpactPoolSize; i++) {
+    const a = new Audio('assets/sfx/shield-impact.mp3');
+    a.volume = audio.sfxVolume;
+    audio.shieldImpactPool.push(a);
   }
 
   // Thruster loops
@@ -400,11 +419,12 @@ function stopMusic() {
   audio.music.currentTime = 0;
 }
 
-function playPhaser() {
+function playPhaser(playerId) {
   if (!audio.unlocked) return;
   const vol = audio.sfxVolume * 0.25; // keep phaser subtle
+  const pool = (playerId === 1) ? audio.blasterAltPool : audio.phaserPool;
   // Find a free slot in the pool (one that's ended or not playing)
-  for (const a of audio.phaserPool) {
+  for (const a of pool) {
     if (a.paused || a.ended) {
       a.currentTime = 0;
       a.volume = vol;
@@ -413,7 +433,24 @@ function playPhaser() {
     }
   }
   // All busy — steal the oldest one
-  const a = audio.phaserPool[0];
+  const a = pool[0];
+  a.currentTime = 0;
+  a.volume = vol;
+  a.play().catch(() => {});
+}
+
+function playShieldImpact() {
+  if (!audio.unlocked) return;
+  const vol = audio.sfxVolume * 0.4;
+  for (const a of audio.shieldImpactPool) {
+    if (a.paused || a.ended) {
+      a.currentTime = 0;
+      a.volume = vol;
+      a.play().catch(() => {});
+      return;
+    }
+  }
+  const a = audio.shieldImpactPool[0];
   a.currentTime = 0;
   a.volume = vol;
   a.play().catch(() => {});
@@ -896,6 +933,9 @@ const game = {
   roundWinner: -1,
   flashTimers: [0, 0],
   explosions: [],
+  shakeTimer: 0,
+  shakeIntensity: 0,
+  bulletTrails: [],
   // Ship variant selections: [p1_variants[10], p2_variants[10]]
   shipVariants: [new Array(10).fill(0), new Array(10).fill(0)],
 
@@ -966,6 +1006,7 @@ function resetRound() {
   game.p2 = createPlayer(1);
   game.shield = createShield();
   game.bullets = [];
+  game.bulletTrails = [];
   game.flashTimers = [0, 0];
   game.explosions = [];
   game.state = 'countdown';
@@ -1069,7 +1110,7 @@ function fireBullet(player) {
     vy: 0,
     owner: player.id,
   });
-  playPhaser();
+  playPhaser(player.id);
 }
 
 // ============================================================
@@ -1415,6 +1456,7 @@ function update(dt) {
     if (shieldCollides(shield, b)) {
       game.bullets.splice(i, 1);
       if (!shield.locked) shield.vy += (Math.random() - 0.5) * 20;
+      playShieldImpact();
       continue;
     }
 
@@ -1439,7 +1481,7 @@ function update(dt) {
 function spawnExplosion(cx, cy, playerId) {
   const colors = playerId === 0
     ? ['#0af', '#0cf', '#08f', '#fff', '#4df', '#06a']
-    : ['#f44', '#f80', '#fa0', '#fff', '#f66', '#c22'];
+    : ['#f6a', '#f8c', '#fa6', '#fff', '#faf', '#c48'];
   const particles = [];
   const count = 28 + Math.floor(Math.random() * 12); // 28-40 particles
 
@@ -1538,10 +1580,53 @@ function drawExplosions() {
   }
 }
 
+// --- Bullet trail particles ---
+function updateBulletTrails(dt) {
+  // Spawn trail particles from each bullet
+  for (const b of game.bullets) {
+    // Spawn 1-2 particles per frame
+    for (let j = 0; j < 2; j++) {
+      game.bulletTrails.push({
+        x: b.x + b.w / 2 + (Math.random() - 0.5) * 2,
+        y: b.y + b.h / 2 + (Math.random() - 0.5) * 2,
+        size: 1 + Math.random() * 1.5,
+        life: 0.2 + Math.random() * 0.15,
+        maxLife: 0.35,
+        owner: b.owner,
+        vx: -b.vx * 0.05 + (Math.random() - 0.5) * 10,
+        vy: (Math.random() - 0.5) * 15,
+      });
+    }
+  }
+  // Update and cull
+  for (let i = game.bulletTrails.length - 1; i >= 0; i--) {
+    const p = game.bulletTrails[i];
+    p.life -= dt;
+    if (p.life <= 0) { game.bulletTrails.splice(i, 1); continue; }
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.size *= 0.96;
+  }
+}
+
+function drawBulletTrails() {
+  for (const p of game.bulletTrails) {
+    const alpha = Math.max(0, p.life / p.maxLife);
+    ctx.globalAlpha = alpha * 0.6;
+    const color = p.owner === 0 ? '#0af' : '#f6a';
+    px(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size, color);
+  }
+  ctx.globalAlpha = 1.0;
+}
+
 function handleHit(hitPlayerId) {
   const scorerId = hitPlayerId === 0 ? 1 : 0;
   game.scores[scorerId]++;
   game.flashTimers[hitPlayerId] = 0.3;
+
+  // Screen shake
+  game.shakeTimer = 0.3;
+  game.shakeIntensity = 6;
 
   // Spawn explosion at the destroyed ship's center
   const hitPlayer = hitPlayerId === 0 ? game.p1 : game.p2;
@@ -1802,6 +1887,16 @@ function drawModifierAnnouncement() {
 // ============================================================
 
 function draw(dt) {
+  // Screen shake decay
+  let shakeX = 0, shakeY = 0;
+  if (game.shakeTimer > 0) {
+    game.shakeTimer -= dt;
+    const progress = Math.max(0, game.shakeTimer / 0.3);
+    const mag = game.shakeIntensity * progress;
+    shakeX = (Math.random() - 0.5) * 2 * mag;
+    shakeY = (Math.random() - 0.5) * 2 * mag;
+  }
+
   // Background — scrolling parallax image + starfield
   px(0, 0, NATIVE_W, NATIVE_H, '#060610');
 
@@ -1841,6 +1936,10 @@ function draw(dt) {
   }
 
   if (game.state === 'menu') return;
+
+  // Apply screen shake offset (game objects only, HUD stays stable)
+  ctx.save();
+  ctx.translate(Math.round(shakeX * scale), Math.round(shakeY * scale));
 
   const p1 = game.p1;
   const p2 = game.p2;
@@ -1898,25 +1997,28 @@ function draw(dt) {
     }
   }
 
-  // Bullets — velocity-based trails for curved shots
+  // Bullet particle trails (behind bullets)
+  drawBulletTrails();
+
+  // Bullets
   for (const b of game.bullets) {
-    const color = b.owner === 0 ? '#0af' : '#f44';
+    const color = b.owner === 0 ? '#0af' : '#f6a';
     px(b.x, b.y, b.w, b.h, color);
-    const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
-    if (speed > 0) {
-      const trailDx = -(b.vx / speed) * 4;
-      const trailDy = -(b.vy / speed) * 4;
-      px(b.x + b.w / 2 + trailDx - 1, b.y + b.h / 2 + trailDy - 0.5, 3, 1,
-        b.owner === 0 ? 'rgba(0,170,255,0.4)' : 'rgba(255,68,68,0.4)');
-    }
+    // Glow core
+    ctx.globalAlpha = 0.4;
+    px(b.x - 0.5, b.y - 0.5, b.w + 1, b.h + 1, b.owner === 0 ? '#4df' : '#faf');
+    ctx.globalAlpha = 1.0;
   }
 
   // Explosions (render on top of bullets)
   drawExplosions();
 
+  // Restore from shake translate — HUD stays stable
+  ctx.restore();
+
   // HUD
   drawText(`P1: ${game.scores[0]}`, 60, 12, '#0af', 10);
-  drawText(`P2: ${game.scores[1]}`, NATIVE_W - 60, 12, '#f44', 10);
+  drawText(`P2: ${game.scores[1]}`, NATIVE_W - 60, 12, '#f6a', 10);
 
   // Modifier HUD
   drawGravityWellIndicator();
@@ -2345,6 +2447,9 @@ function applyState(s) {
         spawnExplosion(hitPlayer.x + hitPlayer.w / 2, hitPlayer.y + hitPlayer.h / 2, hitId);
         playExplosion();
       }
+      // Screen shake on client
+      game.shakeTimer = 0.3;
+      game.shakeIntensity = 6;
     }
   }
 
@@ -2387,8 +2492,8 @@ function applyState(s) {
   // Bullets — direct apply (no interpolation needed, they move fast)
   // Client: play phaser SFX when new bullets appear
   if (net.mode === 'client' && s.bl.length > game.bullets.length) {
-    const newCount = s.bl.length - game.bullets.length;
-    for (let i = 0; i < Math.min(newCount, 3); i++) playPhaser();
+    const newBullets = s.bl.slice(game.bullets.length);
+    for (let i = 0; i < Math.min(newBullets.length, 3); i++) playPhaser(newBullets[i].o);
   }
   game.bullets = s.bl.map(b => ({ x: b.x, y: b.y, w: BULLET_W, h: BULLET_H, vx: b.vx, vy: b.vy, owner: b.o }));
 
@@ -2543,8 +2648,9 @@ function loop(time) {
     if (game.modifiers.blackHole) game.modifiers.blackHole.angle += dt * 2.5;
   }
 
-  // --- Explosions (tick in all states so they play out during roundEnd/gameOver) ---
+  // --- Explosions & bullet trails (tick in all states) ---
   updateExplosions(dt);
+  updateBulletTrails(dt);
 
   // --- Thruster audio ---
   if (game.state === 'playing') {

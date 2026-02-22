@@ -41,10 +41,20 @@
 - [x] Arrow/Enter disabled in online mode
 - [x] Tab close cleanup (peer.destroy on beforeunload)
 
+## V5 (Complete) — Audio, VFX & Tutorial
+- [x] Music system (11 tracks, shuffled playlist)
+- [x] SFX: phaser blaster (P1), alternate blaster (P2), explosion, shield impact, thruster loops
+- [x] Per-player blaster sounds (P1 original, P2 alternate)
+- [x] Explosion particle system (color-coded, 28-40 particles, white flash)
+- [x] Bullet particle trails (fading stream behind projectiles)
+- [x] P2 color scheme: pink bullets, pink HUD, pink explosions
+- [x] Screen shake on hit (decaying intensity, HUD stays stable)
+- [x] Ship variants: 3 unique designs per tier (30 total), randomized per match
+- [x] Gravity well visual overhaul (screen-edge vignette + drifting particles)
+- [x] Black hole: bullets visibly bend, spawns near top/bottom edge
+- [x] Tutorial page (tutorial.html) with "HOW TO PLAY" link on title screen
+
 ## Future Ideas
-- [ ] Sound effects / music
-- [ ] Screen shake on hit
-- [ ] Particle effects (explosions, engine trails)
 - [ ] Spectator mode
 - [ ] Leaderboard / stats tracking
 - [ ] Dedicated server option for tournament play

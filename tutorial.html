@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IN THE BLACK — How to Play</title>
+<style>
+  @font-face {
+    font-family: 'Codex';
+    src: url('assets/Codex.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #060610;
+    color: #ccc;
+    font-family: 'Codex', monospace;
+    line-height: 1.8;
+    padding: 40px 20px;
+    max-width: 700px;
+    margin: 0 auto;
+  }
+  h1 {
+    font-size: 28px;
+    color: #0ff;
+    text-shadow: 0 0 10px #0ff;
+    letter-spacing: 4px;
+    text-align: center;
+    margin-bottom: 4px;
+  }
+  .subtitle {
+    text-align: center;
+    color: #f0f;
+    font-size: 14px;
+    text-shadow: 0 0 8px #f0f;
+    margin-bottom: 32px;
+  }
+  h2 {
+    font-size: 16px;
+    color: #0f0;
+    text-shadow: 0 0 6px #0f0;
+    letter-spacing: 2px;
+    margin: 32px 0 12px;
+    border-bottom: 1px solid #1a1a2e;
+    padding-bottom: 6px;
+  }
+  p { font-size: 12px; margin-bottom: 10px; }
+  .highlight { color: #0ff; }
+  .p1 { color: #0af; }
+  .p2 { color: #f6a; }
+  .warn { color: #ff0; }
+  .dim { color: #666; font-size: 10px; }
+
+  .diagram {
+    background: #0a0a18;
+    border: 1px solid #1a1a2e;
+    padding: 16px;
+    margin: 12px 0;
+    font-size: 11px;
+    line-height: 1.6;
+    white-space: pre;
+    overflow-x: auto;
+    color: #888;
+  }
+
+  .controls-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 12px 0;
+  }
+  .control-box {
+    background: #0a0a18;
+    border: 1px solid #1a1a2e;
+    padding: 12px;
+    font-size: 11px;
+  }
+  .control-box h3 {
+    font-size: 12px;
+    margin-bottom: 8px;
+    letter-spacing: 1px;
+  }
+  .control-box.p1-box h3 { color: #0af; }
+  .control-box.p2-box h3 { color: #f6a; }
+  .key {
+    display: inline-block;
+    background: #1a1a2e;
+    border: 1px solid #333;
+    padding: 2px 6px;
+    font-size: 10px;
+    color: #fff;
+    border-radius: 2px;
+  }
+
+  .tier-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 10px 0;
+  }
+  .tier {
+    background: #0a0a18;
+    border: 1px solid #1a1a2e;
+    padding: 4px 10px;
+    font-size: 10px;
+  }
+  .tier-num { color: #555; }
+
+  .modifier-card {
+    background: #0a0a18;
+    border: 1px solid #1a1a2e;
+    padding: 12px;
+    margin: 8px 0;
+  }
+  .modifier-card h3 {
+    font-size: 12px;
+    letter-spacing: 1px;
+    margin-bottom: 6px;
+  }
+  .mod-gravity h3 { color: #a0f; }
+  .mod-blackhole h3 { color: #f80; }
+  .mod-overclock h3 { color: #ff0; }
+
+  .back-link {
+    display: inline-block;
+    margin-top: 32px;
+    font-family: 'Codex', monospace;
+    font-size: 14px;
+    color: #0f0;
+    border: 2px solid #0f0;
+    padding: 8px 24px;
+    text-decoration: none;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    transition: all 0.2s;
+  }
+  .back-link:hover {
+    background: #0f0;
+    color: #000;
+    box-shadow: 0 0 15px #0f0;
+  }
+  .center { text-align: center; }
+
+  .footer {
+    text-align: center;
+    margin-top: 40px;
+    color: #333;
+    font-size: 10px;
+  }
+  .footer span { color: #0af; }
+</style>
+</head>
+<body>
+
+<h1>IN THE BLACK</h1>
+<p class="subtitle">// HOW TO PLAY //</p>
+
+<h2>// OBJECTIVE</h2>
+<p>Two ships face off across the arena. Shoot your opponent to score.
+<span class="highlight">First to 6 wins.</span> Best of 10 rounds.</p>
+
+<div class="diagram">      <span class="p1">[P1]</span> -------- <span class="warn">( shield )</span> -------- <span class="p2">[P2]</span>
+       ^                               ^
+   shoots right                   shoots left</div>
+
+<h2>// CONTROLS</h2>
+<div class="controls-grid">
+  <div class="control-box p1-box">
+    <h3>PLAYER 1</h3>
+    <p><span class="key">W</span> / <span class="key">S</span> or <span class="key">Mouse Wheel</span> — Move</p>
+    <p><span class="key">Click</span> or <span class="key">Space</span> — Fire</p>
+  </div>
+  <div class="control-box p2-box">
+    <h3>PLAYER 2</h3>
+    <p><span class="key">&#9650;</span> / <span class="key">&#9660;</span> — Move</p>
+    <p><span class="key">Enter</span> — Fire</p>
+  </div>
+</div>
+<p class="dim">Online: Both players use P1 controls (WASD / Mouse / Space). Your inputs are mapped to your ship.</p>
+
+<h2>// THE SHIELD</h2>
+<p>A color-shifting energy orb drifts between the two ships. It <span class="highlight">blocks all bullets</span> on contact.</p>
+<p>The shield bounces off the top and bottom walls and moves side to side unpredictably.</p>
+
+<div class="diagram">  bullets blocked:    <span class="p1">---&gt;</span> <span class="warn">( O )</span> <span class="p2">&lt;---</span>
+
+  bullets passing:    <span class="p1">------&gt;</span>          <span class="p2">&lt;------</span>
+                             <span class="warn">( O )</span>
+                         (shield elsewhere)</div>
+
+<h2>// SHIELD LOCK</h2>
+<p>When the shield drifts past a player, it <span class="warn">locks in place for 2 seconds</span> right in front of their opponent — giving them free cover.</p>
+<p>A yellow countdown appears on the shield while locked. Use this time to reposition!</p>
+
+<div class="diagram">  shield passes P1:
+  <span class="p1">[P1]</span>      <span class="warn">( LOCKED! )</span> <span class="p2">[P2]</span>
+              ^
+     2s protection for P2</div>
+
+<h2>// MODIFIERS</h2>
+<p>Random modifiers activate during the match, changing the rules temporarily.</p>
+
+<div class="modifier-card mod-gravity">
+  <h3>GRAVITY WELL</h3>
+  <p>Alters ship movement speed. <span class="highlight">DRAG</span> slows you down — <span class="highlight">SURGE</span> speeds you up. Watch the vignette glow on screen edges.</p>
+</div>
+
+<div class="modifier-card mod-blackhole">
+  <h3>BLACK HOLE</h3>
+  <p>Appears near the top or bottom edge. <span class="highlight">Pulls all ships toward it</span> and <span class="highlight">bends bullet trajectories</span>. Curve your shots around the shield!</p>
+</div>
+
+<div class="modifier-card mod-overclock">
+  <h3>OVERCLOCK</h3>
+  <p>Boosts fire rate for both players. When it ends, your weapons <span class="highlight">malfunction briefly</span> — firing in unpredictable burst patterns.</p>
+</div>
+
+<h2>// SHIP TIERS</h2>
+<p>Your ship upgrades visually with each point you score. 10 tiers, 3 variants each — randomized every match.</p>
+
+<div class="tier-list">
+  <div class="tier"><span class="tier-num">0</span> Tin Can</div>
+  <div class="tier"><span class="tier-num">1</span> Scout</div>
+  <div class="tier"><span class="tier-num">2</span> Interceptor</div>
+  <div class="tier"><span class="tier-num">3</span> Viper</div>
+  <div class="tier"><span class="tier-num">4</span> Phantom</div>
+  <div class="tier"><span class="tier-num">5</span> Wraith</div>
+  <div class="tier"><span class="tier-num">6</span> Nova</div>
+  <div class="tier"><span class="tier-num">7</span> Supernova</div>
+  <div class="tier"><span class="tier-num">8</span> Celestial</div>
+  <div class="tier" style="color:#ff0; border-color:#ff0;"><span class="tier-num">9</span> LEGENDARY</div>
+</div>
+<p class="dim">Ships also grow slightly larger with each point — bigger target, but looks cooler.</p>
+
+<h2>// ONLINE PLAY</h2>
+<p>One player clicks <span class="highlight">HOST ONLINE</span> and gets a 4-character room code. The other clicks <span class="highlight">JOIN ONLINE</span> and enters the code.</p>
+<p>No accounts, no servers — direct peer-to-peer connection.</p>
+
+<div class="center">
+  <a href="index.html" class="back-link">Back to Game</a>
+</div>
+
+<p class="footer">Developed & Published by <span>anarchygames.org</span></p>
+
+</body>
+</html>
