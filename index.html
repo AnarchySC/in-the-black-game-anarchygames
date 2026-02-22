@@ -402,11 +402,12 @@ function stopMusic() {
 
 function playPhaser() {
   if (!audio.unlocked) return;
+  const vol = audio.sfxVolume * 0.25; // keep phaser subtle
   // Find a free slot in the pool (one that's ended or not playing)
   for (const a of audio.phaserPool) {
     if (a.paused || a.ended) {
       a.currentTime = 0;
-      a.volume = audio.sfxVolume;
+      a.volume = vol;
       a.play().catch(() => {});
       return;
     }
@@ -414,7 +415,7 @@ function playPhaser() {
   // All busy — steal the oldest one
   const a = audio.phaserPool[0];
   a.currentTime = 0;
-  a.volume = audio.sfxVolume;
+  a.volume = vol;
   a.play().catch(() => {});
 }
 
@@ -480,220 +481,384 @@ function drawText(text, x, y, color, size) {
   ctx.fillText(text, x * scale, y * scale);
 }
 
-// --- Ship pixel art — 10 unique tier designs ---
-function drawShip(x, y, w, h, facingRight, tier, flash) {
-  if (flash) {
-    px(x - 2, y - 2, w + 4, h + 4, 'rgba(255,255,255,0.6)');
-    return;
-  }
+// --- Ship pixel art — 10 tiers x 3 variants each ---
+const VARIANTS_PER_TIER = 3;
 
-  const c = getShipColors(tier);
+function getShipColors(tier, variant) {
+  const p = [
+    // T0: Tin Can
+    [{ body:'#556',cockpit:'#4af',wing:'#667',engine:'#c60',stripe:'#789' },
+     { body:'#554',cockpit:'#fa4',wing:'#665',engine:'#0a6',stripe:'#887' },
+     { body:'#645',cockpit:'#f48',wing:'#756',engine:'#c80',stripe:'#968' }],
+    // T1: Scout
+    [{ body:'#457',cockpit:'#3cf',wing:'#568',engine:'#e80',stripe:'#5af' },
+     { body:'#574',cockpit:'#cf3',wing:'#685',engine:'#80e',stripe:'#af5' },
+     { body:'#745',cockpit:'#f3c',wing:'#856',engine:'#e08',stripe:'#f5a' }],
+    // T2: Interceptor
+    [{ body:'#246',cockpit:'#0ff',wing:'#358',engine:'#0cf',stripe:'#0ef' },
+     { body:'#462',cockpit:'#ff0',wing:'#583',engine:'#fc0',stripe:'#fe0' },
+     { body:'#624',cockpit:'#f0f',wing:'#835',engine:'#f0c',stripe:'#f0e' }],
+    // T3: Viper
+    [{ body:'#353',cockpit:'#0ff',wing:'#464',engine:'#fc0',stripe:'#ff0' },
+     { body:'#533',cockpit:'#f44',wing:'#644',engine:'#f80',stripe:'#fa0' },
+     { body:'#335',cockpit:'#4af',wing:'#446',engine:'#08f',stripe:'#0af' }],
+    // T4: Phantom
+    [{ body:'#224',cockpit:'#0ff',wing:'#335',engine:'#08f',stripe:'#0ff' },
+     { body:'#422',cockpit:'#f44',wing:'#533',engine:'#f08',stripe:'#f44' },
+     { body:'#242',cockpit:'#0f4',wing:'#353',engine:'#0f8',stripe:'#0f4' }],
+    // T5: Wraith
+    [{ body:'#426',cockpit:'#c4f',wing:'#537',engine:'#a0f',stripe:'#d6f' },
+     { body:'#264',cockpit:'#4fc',wing:'#375',engine:'#0fa',stripe:'#6fd' },
+     { body:'#642',cockpit:'#fc4',wing:'#753',engine:'#fa0',stripe:'#fd6' }],
+    // T6: Nova
+    [{ body:'#622',cockpit:'#fff',wing:'#833',engine:'#f40',stripe:'#f80' },
+     { body:'#226',cockpit:'#fff',wing:'#338',engine:'#04f',stripe:'#08f' },
+     { body:'#262',cockpit:'#fff',wing:'#383',engine:'#0f4',stripe:'#0f8' }],
+    // T7: Supernova
+    [{ body:'#a48',cockpit:'#fff',wing:'#c6a',engine:'#f8f',stripe:'#faf' },
+     { body:'#48a',cockpit:'#fff',wing:'#6ac',engine:'#8ff',stripe:'#aff' },
+     { body:'#8a4',cockpit:'#fff',wing:'#ac6',engine:'#ff8',stripe:'#ffa' }],
+    // T8: Celestial
+    [{ body:'#537',cockpit:'#ff0',wing:'#648',engine:'#fa0',stripe:'#fd0' },
+     { body:'#375',cockpit:'#0ff',wing:'#486',engine:'#0af',stripe:'#0df' },
+     { body:'#753',cockpit:'#f0f',wing:'#864',engine:'#f0a',stripe:'#f0d' }],
+    // T9: LEGENDARY
+    [{ body:'#a80',cockpit:'#fff',wing:'#db0',engine:'#ff0',stripe:'#fff' },
+     { body:'#08a',cockpit:'#fff',wing:'#0bd',engine:'#0ff',stripe:'#fff' },
+     { body:'#a08',cockpit:'#fff',wing:'#d0b',engine:'#f0f',stripe:'#fff' }],
+  ];
+  return p[Math.min(tier, 9)][variant % VARIANTS_PER_TIER];
+}
+
+// Ship draw functions: shipDrawFns[tier][variant](dp, c, hh, w, ctx)
+const shipDrawFns = [];
+
+// T0: Tin Can
+shipDrawFns[0] = [
+  // V0: rectangle + tiny cockpit + single engine
+  (dp, c) => {
+    dp(3,-4,11,8,c.body); dp(13,-2,3,4,c.cockpit);
+    dp(1,-2,3,4,c.engine); dp(-1,-1,2,2,'#e60');
+  },
+  // V1: wide flat pod, side vents
+  (dp, c) => {
+    dp(2,-3,12,6,c.body); dp(13,-1,3,2,c.cockpit);
+    dp(0,-3,2,2,c.engine); dp(0,1,2,2,c.engine);
+    dp(-2,-2,2,1,'#e60'); dp(-2,1,2,1,'#e60');
+  },
+  // V2: tall narrow shuttle
+  (dp, c) => {
+    dp(4,-5,8,10,c.body); dp(11,-2,4,4,c.cockpit);
+    dp(2,-3,3,6,c.engine); dp(-1,-2,3,4,'#e60');
+    dp(4,-5,8,1,c.stripe);
+  },
+];
+
+// T1: Scout
+shipDrawFns[1] = [
+  // V0: long hull + small fins + stripe
+  (dp, c, hh) => {
+    dp(2,-5,13,10,c.body); dp(14,-2,3,4,c.cockpit);
+    dp(0,-2,3,4,c.engine); dp(-2,-1,2,2,'#f80');
+    dp(1,-hh,5,2,c.wing); dp(1,hh-2,5,2,c.wing);
+    dp(5,0,8,1,c.stripe);
+  },
+  // V1: compact body, swept-back wings
+  (dp, c, hh) => {
+    dp(3,-4,10,8,c.body); dp(12,-2,4,4,c.cockpit);
+    dp(0,-2,3,4,c.engine); dp(-2,-1,2,2,'#f80');
+    dp(0,-hh,8,2,c.wing); dp(0,hh-2,8,2,c.wing);
+    dp(2,-hh-1,3,1,c.stripe); dp(2,hh,3,1,c.stripe);
+  },
+  // V2: needle-nose, stub wings
+  (dp, c, hh) => {
+    dp(1,-3,8,6,c.body); dp(9,-2,5,4,c.body);
+    dp(13,-1,4,2,c.cockpit); dp(0,-2,2,4,c.engine);
+    dp(-2,-1,2,2,'#f80');
+    dp(2,-hh,4,2,c.wing); dp(2,hh-2,4,2,c.wing);
+    dp(4,-1,9,1,c.stripe);
+  },
+];
+
+// T2: Interceptor
+shipDrawFns[2] = [
+  // V0: tapered hull, swept wings, dual engines
+  (dp, c, hh) => {
+    dp(1,-5,6,10,c.body); dp(7,-4,5,8,c.body); dp(12,-2,4,4,c.body);
+    dp(14,-1,3,2,c.cockpit);
+    dp(0,-hh+1,9,2,c.wing); dp(0,hh-3,9,2,c.wing);
+    dp(0,-hh-1,3,1,c.stripe); dp(0,hh,3,1,c.stripe);
+    dp(-1,-4,2,2,c.engine); dp(-1,2,2,2,c.engine);
+    dp(-3,-3,2,1,'#0ef'); dp(-3,3,2,1,'#0ef');
+    dp(4,0,10,1,c.stripe);
+  },
+  // V1: arrow-shaped, canard wings
+  (dp, c, hh) => {
+    dp(2,-3,14,6,c.body); dp(14,-1,3,2,c.cockpit);
+    dp(0,-2,3,4,c.engine); dp(-2,-1,2,2,'#0ef');
+    dp(4,-hh,6,2,c.wing); dp(4,hh-2,6,2,c.wing);
+    dp(10,-hh+2,4,1,c.stripe); dp(10,hh-3,4,1,c.stripe);
+    dp(3,0,11,1,c.stripe);
+  },
+  // V2: delta wing, big single engine
+  (dp, c, hh) => {
+    dp(3,-4,9,8,c.body); dp(11,-2,4,4,c.cockpit);
+    dp(-1,-hh+1,12,2,c.wing); dp(-1,hh-3,12,2,c.wing);
+    dp(0,-3,3,6,c.engine); dp(-3,-2,3,4,'#0ef');
+    dp(5,-3,7,1,c.stripe); dp(5,3,7,1,c.stripe);
+  },
+];
+
+// T3: Viper
+shipDrawFns[3] = [
+  // V0: angular hull, gun mounts, aggressive
+  (dp, c, hh) => {
+    dp(2,-4,5,8,c.body); dp(7,-3,5,6,c.body); dp(12,-1,5,2,c.body);
+    dp(15,-1,3,2,c.cockpit);
+    dp(-1,-hh+1,11,2,c.wing); dp(-1,hh-3,11,2,c.wing);
+    dp(9,-hh-1,3,2,c.stripe); dp(9,hh-1,3,2,c.stripe);
+    dp(0,-3,3,6,c.engine); dp(-3,-2,3,4,'#fc0');
+    dp(4,-3,7,1,c.stripe); dp(4,3,7,1,c.stripe);
+  },
+  // V1: twin-boom, central cockpit
+  (dp, c, hh) => {
+    dp(4,-2,10,4,c.body); dp(13,-1,4,2,c.cockpit);
+    dp(1,-hh,5,3,c.body); dp(1,hh-3,5,3,c.body);
+    dp(-1,-hh+1,2,2,c.engine); dp(-1,hh-3,2,2,c.engine);
+    dp(-3,-hh+1,2,1,'#fc0'); dp(-3,hh-2,2,1,'#fc0');
+    dp(5,-hh,8,1,c.stripe); dp(5,hh-1,8,1,c.stripe);
+    dp(5,-1,8,1,c.stripe);
+  },
+  // V2: broad swept wing, chin gun
+  (dp, c, hh) => {
+    dp(3,-3,8,6,c.body); dp(10,-1,5,2,c.cockpit);
+    dp(-1,-hh+1,13,2,c.wing); dp(-1,hh-3,13,2,c.wing);
+    dp(0,-2,3,4,c.engine); dp(-3,-1,3,2,'#fc0');
+    dp(14,1,3,2,c.stripe); // chin gun
+    dp(3,-3,9,1,c.stripe); dp(3,3,9,1,c.stripe);
+  },
+];
+
+// T4: Phantom
+shipDrawFns[4] = [
+  // V0: low-profile stealth, bright edge lines
+  (dp, c, hh) => {
+    dp(2,-3,13,6,c.body); dp(15,-1,2,2,c.cockpit);
+    dp(0,-hh+2,12,2,c.wing); dp(0,hh-4,12,2,c.wing);
+    dp(0,-hh,6,2,c.wing); dp(0,hh-2,6,2,c.wing);
+    dp(-1,-2,2,4,c.engine); dp(-3,-1,2,2,'#08f');
+    dp(2,-3,13,1,c.stripe); dp(2,3,13,1,c.stripe);
+    dp(0,-hh+2,12,1,'#0ff'); dp(0,hh-3,12,1,'#0ff');
+  },
+  // V1: diamond shape, minimal
+  (dp, c, hh) => {
+    dp(4,-2,9,4,c.body); dp(2,-4,5,2,c.body); dp(2,2,5,2,c.body);
+    dp(12,-1,4,2,c.cockpit);
+    dp(0,-hh+1,8,2,c.wing); dp(0,hh-3,8,2,c.wing);
+    dp(-1,-1,2,2,c.engine); dp(-3,0,2,1,'#08f');
+    dp(2,-4,12,1,c.stripe); dp(2,4,12,1,c.stripe);
+  },
+  // V2: cranked arrow, glow edges
+  (dp, c, hh) => {
+    dp(3,-2,12,4,c.body); dp(14,-1,3,2,c.cockpit);
+    dp(-1,-hh+1,10,2,c.wing); dp(-1,hh-3,10,2,c.wing);
+    dp(6,-hh-1,6,2,c.wing); dp(6,hh-1,6,2,c.wing);
+    dp(0,-1,3,2,c.engine); dp(-2,0,2,1,'#08f');
+    dp(3,-2,12,1,c.stripe); dp(3,2,12,1,c.stripe);
+  },
+];
+
+// T5: Wraith
+shipDrawFns[5] = [
+  // V0: ornate, triple engines, energy lines
+  (dp, c, hh) => {
+    dp(3,-5,10,10,c.body); dp(13,-2,4,4,c.cockpit);
+    dp(0,-5,2,2,c.engine); dp(0,-1,2,2,c.engine); dp(0,3,2,2,c.engine);
+    dp(-2,-4,2,1,'#a0f'); dp(-3,0,3,1,'#c4f'); dp(-2,4,2,1,'#a0f');
+    dp(1,-hh+1,8,2,c.wing); dp(1,hh-3,8,2,c.wing);
+    dp(4,-4,9,1,c.stripe); dp(4,-2,9,1,c.stripe);
+    dp(4,2,9,1,c.stripe); dp(4,4,9,1,c.stripe);
+  },
+  // V1: ring-engine, energy spine
+  (dp, c, hh) => {
+    dp(4,-4,8,8,c.body); dp(12,-2,4,4,c.cockpit);
+    dp(-1,-3,3,1,c.engine); dp(-1,2,3,1,c.engine);
+    dp(-1,-1,3,1,c.engine); // ring shape
+    dp(-3,-2,2,1,'#c4f'); dp(-3,0,2,1,'#c4f'); dp(-3,2,2,1,'#c4f');
+    dp(1,-hh+1,10,2,c.wing); dp(1,hh-3,10,2,c.wing);
+    dp(5,0,8,1,c.stripe); // energy spine
+    dp(4,-3,9,1,c.stripe); dp(4,3,9,1,c.stripe);
+  },
+  // V2: asymmetric, upper wing + lower stabilizer
+  (dp, c, hh) => {
+    dp(3,-4,10,8,c.body); dp(13,-2,4,4,c.cockpit);
+    dp(0,-2,3,4,c.engine); dp(-2,-1,2,2,'#a0f');
+    dp(0,-hh,12,3,c.wing); // large upper wing
+    dp(3,hh-3,6,2,c.wing); // small lower stabilizer
+    dp(4,-4,9,1,c.stripe); dp(4,0,9,1,c.stripe);
+    dp(0,-hh,12,1,'#c4f');
+  },
+];
+
+// T6: Nova
+shipDrawFns[6] = [
+  // V0: wide hull, forward-swept wings
+  (dp, c, hh) => {
+    dp(2,-6,12,12,c.body); dp(3,-5,10,10,'#733');
+    dp(12,-3,4,6,c.body); dp(14,-1,3,2,c.cockpit);
+    dp(6,-hh+1,8,2,c.wing); dp(6,hh-3,8,2,c.wing);
+    dp(2,-hh+3,5,2,c.wing); dp(2,hh-5,5,2,c.wing);
+    dp(-1,-4,3,8,c.engine); dp(-3,-3,2,6,'#f40');
+    dp(5,-5,1,10,c.stripe); dp(9,-4,1,8,c.stripe);
+  },
+  // V1: blocky heavy cruiser, armored plates
+  (dp, c, hh) => {
+    dp(1,-5,14,10,c.body); dp(2,-4,12,8,'#733');
+    dp(14,-2,3,4,c.cockpit);
+    dp(0,-hh+1,6,2,c.wing); dp(0,hh-3,6,2,c.wing);
+    dp(-1,-4,2,3,c.engine); dp(-1,1,2,3,c.engine);
+    dp(-3,-3,2,2,'#f40'); dp(-3,1,2,2,'#f40');
+    dp(4,-5,1,10,c.stripe); dp(8,-4,1,8,c.stripe); dp(12,-3,1,6,c.stripe);
+  },
+  // V2: wedge shape, multi-turrets
+  (dp, c, hh) => {
+    dp(1,-6,10,12,c.body); dp(11,-4,5,8,c.body);
+    dp(15,-1,2,2,c.cockpit);
+    dp(4,-hh,4,2,c.wing); dp(4,hh-2,4,2,c.wing);
+    dp(0,-4,2,8,c.engine); dp(-3,-3,3,6,'#f40');
+    dp(10,-hh+1,3,2,c.stripe); dp(10,hh-3,3,2,c.stripe);
+    dp(6,-5,1,10,c.stripe);
+  },
+];
+
+// T7: Supernova
+shipDrawFns[7] = [
+  // V0: slim crystalline body, translucent energy wings
+  (dp, c, hh, w, ctx) => {
+    dp(4,-4,9,8,c.body); dp(13,-2,4,4,c.cockpit);
+    dp(0,-2,3,4,c.engine); dp(-2,-1,2,2,'#f8f');
+    ctx.globalAlpha=0.25; dp(-2,-hh,14,3,c.wing); dp(-2,hh-3,14,3,c.wing);
+    ctx.globalAlpha=1.0;
+    dp(-2,-hh+2,14,1,'#faf'); dp(-2,hh-1,14,1,'#faf');
+    dp(5,-3,7,1,c.stripe); dp(5,3,7,1,c.stripe);
+    ctx.globalAlpha=0.15; dp(5,-2,7,4,'#fff'); ctx.globalAlpha=1.0;
+  },
+  // V1: prism core, energy tendrils
+  (dp, c, hh, w, ctx) => {
+    dp(5,-3,7,6,c.body); dp(12,-1,4,2,c.cockpit);
+    dp(3,-5,4,2,c.body); dp(3,3,4,2,c.body); // prism points
+    dp(0,-1,3,2,c.engine); dp(-2,0,2,1,'#f8f');
+    ctx.globalAlpha=0.3;
+    dp(-2,-hh,16,2,c.wing); dp(-2,hh-2,16,2,c.wing);
+    dp(0,-hh+2,12,1,c.wing); dp(0,hh-3,12,1,c.wing);
+    ctx.globalAlpha=1.0;
+    dp(0,-hh+2,14,1,c.stripe); dp(0,hh-3,14,1,c.stripe);
+    ctx.globalAlpha=0.15; dp(4,-3,8,6,'#fff'); ctx.globalAlpha=1.0;
+  },
+  // V2: floating segments, energy connections
+  (dp, c, hh, w, ctx) => {
+    dp(5,-2,7,4,c.body); dp(13,-1,3,2,c.cockpit); // center
+    dp(2,-hh,6,3,c.body); dp(2,hh-3,6,3,c.body); // outer segments
+    dp(0,-1,3,2,c.engine); dp(-2,0,2,1,'#f8f');
+    ctx.globalAlpha=0.4; dp(3,-hh+3,2,hh*2-6,c.stripe); ctx.globalAlpha=1.0; // energy link
+    dp(5,-hh+2,8,1,c.stripe); dp(5,hh-3,8,1,c.stripe);
+    ctx.globalAlpha=0.2; dp(2,-hh,10,hh*2,'#fff'); ctx.globalAlpha=1.0;
+  },
+];
+
+// T8: Celestial
+shipDrawFns[8] = [
+  // V0: double-delta wings, golden accents, faint aura
+  (dp, c, hh, w, ctx) => {
+    ctx.globalAlpha=0.08; dp(-4,-hh-3,w+8,hh*2+6,c.engine); ctx.globalAlpha=1.0;
+    dp(2,-6,12,12,c.body); dp(12,-3,4,6,c.body); dp(14,-1,3,2,c.cockpit);
+    dp(2,-hh+1,10,2,c.wing); dp(2,hh-3,10,2,c.wing);
+    dp(0,-hh-1,7,2,c.wing); dp(0,hh-1,7,2,c.wing);
+    dp(0,-3,3,6,c.engine); dp(-3,-2,3,4,'#fa0');
+    dp(4,-5,8,1,'#fd0'); dp(4,5,8,1,'#fd0'); dp(6,-4,2,8,'#fc0');
+  },
+  // V1: tri-wing angelic, halo glow
+  (dp, c, hh, w, ctx) => {
+    ctx.globalAlpha=0.1; dp(-2,-hh-2,w+4,hh*2+4,c.engine); ctx.globalAlpha=1.0;
+    dp(3,-4,10,8,c.body); dp(13,-2,4,4,c.cockpit);
+    dp(0,-hh,10,2,c.wing); dp(0,hh-2,10,2,c.wing);
+    dp(4,-hh+2,8,2,c.wing); dp(4,hh-4,8,2,c.wing); // mid wings
+    dp(1,-2,3,4,c.engine); dp(-2,-1,2,2,'#fa0');
+    dp(5,-4,8,1,'#fd0'); dp(5,4,8,1,'#fd0');
+    dp(3,0,10,1,'#fc0');
+  },
+  // V2: ring structure, central crystal
+  (dp, c, hh, w, ctx) => {
+    ctx.globalAlpha=0.08; dp(-3,-hh-2,w+6,hh*2+4,c.engine); ctx.globalAlpha=1.0;
+    dp(6,-3,6,6,c.body); dp(12,-1,4,2,c.cockpit); // crystal core
+    dp(1,-hh,12,2,c.wing); dp(1,hh-2,12,2,c.wing);
+    dp(-1,-hh+2,4,hh*2-4,c.wing); // ring sides
+    dp(0,-3,2,6,c.engine); dp(-2,-2,2,4,'#fa0');
+    dp(3,-hh,1,hh*2,'#fc0'); dp(10,-hh,1,hh*2,'#fc0'); // ring verticals
+    dp(4,-3,6,1,'#fd0'); dp(4,3,6,1,'#fd0');
+  },
+];
+
+// T9: LEGENDARY
+shipDrawFns[9] = [
+  // V0: golden, radiant aura, elaborate multi-wing, engine array
+  (dp, c, hh, w, ctx) => {
+    ctx.globalAlpha=0.06; dp(-6,-hh-4,w+12,hh*2+8,'#ff0');
+    ctx.globalAlpha=0.12; dp(-3,-hh-2,w+6,hh*2+4,'#fa0'); ctx.globalAlpha=1.0;
+    dp(1,-6,14,12,c.body); dp(13,-3,4,6,c.body); dp(15,-1,3,2,c.cockpit);
+    dp(-2,-hh,14,3,c.wing); dp(-2,hh-3,14,3,c.wing);
+    dp(-2,-hh-2,5,2,c.stripe); dp(-2,hh,5,2,c.stripe);
+    dp(0,-5,2,2,c.engine); dp(0,-1,2,2,c.engine); dp(0,3,2,2,c.engine);
+    dp(-3,-4,3,1,'#ff0'); dp(-4,0,4,1,'#ff8'); dp(-3,4,3,1,'#ff0');
+    dp(3,-5,10,1,'#fff'); dp(3,5,10,1,'#fff');
+    dp(5,-4,7,1,c.stripe); dp(5,4,7,1,c.stripe); dp(8,-1,2,2,'#fff');
+  },
+  // V1: phoenix form, trailing fire wings
+  (dp, c, hh, w, ctx) => {
+    ctx.globalAlpha=0.06; dp(-8,-hh-4,w+16,hh*2+8,'#f80');
+    ctx.globalAlpha=0.12; dp(-4,-hh-2,w+8,hh*2+4,'#fa0'); ctx.globalAlpha=1.0;
+    dp(3,-5,11,10,c.body); dp(14,-2,3,4,c.cockpit);
+    dp(-3,-hh,14,3,c.wing); dp(-3,hh-3,14,3,c.wing);
+    // Fire trail on wings
+    ctx.globalAlpha=0.4;
+    dp(-6,-hh-1,8,2,'#f40'); dp(-6,hh-1,8,2,'#f40');
+    ctx.globalAlpha=0.25;
+    dp(-9,-hh,6,1,'#f80'); dp(-9,hh,6,1,'#f80');
+    ctx.globalAlpha=1.0;
+    dp(0,-4,2,2,c.engine); dp(0,2,2,2,c.engine);
+    dp(-3,-3,3,1,'#ff0'); dp(-4,0,4,1,'#ff8'); dp(-3,3,3,1,'#ff0');
+    dp(4,-4,9,1,'#fff'); dp(4,4,9,1,'#fff');
+  },
+  // V2: void lord, dark core with brilliant corona
+  (dp, c, hh, w, ctx) => {
+    // Brilliant corona
+    ctx.globalAlpha=0.08; dp(-6,-hh-4,w+12,hh*2+8,'#fff');
+    ctx.globalAlpha=0.15; dp(-3,-hh-2,w+6,hh*2+4,c.stripe); ctx.globalAlpha=1.0;
+    dp(2,-6,12,12,'#112'); dp(3,-5,10,10,'#223'); // dark core
+    dp(14,-2,3,4,c.cockpit);
+    dp(-1,-hh,13,2,c.wing); dp(-1,hh-2,13,2,c.wing);
+    dp(-1,-hh-2,6,2,c.stripe); dp(-1,hh,6,2,c.stripe);
+    dp(0,-4,2,8,c.engine);
+    dp(-3,-3,3,1,c.stripe); dp(-4,0,4,1,'#fff'); dp(-3,3,3,1,c.stripe);
+    dp(4,-5,8,1,c.stripe); dp(4,5,8,1,c.stripe);
+    dp(7,-4,1,8,'#fff'); dp(10,-3,1,6,c.stripe);
+  },
+];
+
+function drawShip(x, y, w, h, facingRight, tier, variant, flash) {
+  if (flash) return;
+
+  const v = variant % VARIANTS_PER_TIER;
+  const c = getShipColors(tier, v);
   const cy = y + h / 2;
   const hh = Math.floor(h / 2);
 
-  // dp: draw pixel with auto-mirror for facing direction
-  // lx: 0 = tail edge, positive = toward nose. ly: offset from center.
   function dp(lx, ly, dw, dh, color) {
     px(facingRight ? (x + lx) : (x + w - lx - dw), cy + ly, dw, dh, color);
   }
 
-  // T0: Tin Can — basic rectangle, tiny cockpit, single engine
-  if (tier === 0) {
-    dp(3, -4, 11, 8, c.body);
-    dp(13, -2, 3, 4, c.cockpit);
-    dp(1, -2, 3, 4, c.engine);
-    dp(-1, -1, 2, 2, '#e60');
-  }
-
-  // T1: Scout — longer hull, small fins, accent stripe
-  else if (tier === 1) {
-    dp(2, -5, 13, 10, c.body);
-    dp(14, -2, 3, 4, c.cockpit);
-    dp(0, -2, 3, 4, c.engine);
-    dp(-2, -1, 2, 2, '#f80');
-    dp(1, -hh, 5, 2, c.wing);
-    dp(1, hh - 2, 5, 2, c.wing);
-    dp(5, 0, 8, 1, c.stripe);
-  }
-
-  // T2: Interceptor — tapered hull, swept wings, dual engines
-  else if (tier === 2) {
-    dp(1, -5, 6, 10, c.body);
-    dp(7, -4, 5, 8, c.body);
-    dp(12, -2, 4, 4, c.body);
-    dp(14, -1, 3, 2, c.cockpit);
-    dp(0, -hh + 1, 9, 2, c.wing);
-    dp(0, hh - 3, 9, 2, c.wing);
-    dp(0, -hh - 1, 3, 1, c.stripe);
-    dp(0, hh, 3, 1, c.stripe);
-    dp(-1, -4, 2, 2, c.engine);
-    dp(-1, 2, 2, 2, c.engine);
-    dp(-3, -3, 2, 1, '#0ef');
-    dp(-3, 3, 2, 1, '#0ef');
-    dp(4, 0, 10, 1, c.stripe);
-  }
-
-  // T3: Viper — angular hull, gun mounts on wings, aggressive
-  else if (tier === 3) {
-    dp(2, -4, 5, 8, c.body);
-    dp(7, -3, 5, 6, c.body);
-    dp(12, -1, 5, 2, c.body);
-    dp(15, -1, 3, 2, c.cockpit);
-    dp(-1, -hh + 1, 11, 2, c.wing);
-    dp(-1, hh - 3, 11, 2, c.wing);
-    dp(9, -hh - 1, 3, 2, c.stripe);
-    dp(9, hh - 1, 3, 2, c.stripe);
-    dp(0, -3, 3, 6, c.engine);
-    dp(-3, -2, 3, 4, '#fc0');
-    dp(4, -3, 7, 1, c.stripe);
-    dp(4, 3, 7, 1, c.stripe);
-    dp(7, 0, 5, 1, '#ff0');
-  }
-
-  // T4: Phantom — low-profile stealth, dark body, bright edge lines
-  else if (tier === 4) {
-    dp(2, -3, 13, 6, c.body);
-    dp(15, -1, 2, 2, c.cockpit);
-    dp(0, -hh + 2, 12, 2, c.wing);
-    dp(0, hh - 4, 12, 2, c.wing);
-    dp(0, -hh, 6, 2, c.wing);
-    dp(0, hh - 2, 6, 2, c.wing);
-    dp(-1, -2, 2, 4, c.engine);
-    dp(-3, -1, 2, 2, '#08f');
-    // Bright edge highlights
-    dp(2, -3, 13, 1, c.stripe);
-    dp(2, 3, 13, 1, c.stripe);
-    dp(0, -hh + 2, 12, 1, '#0ff');
-    dp(0, hh - 3, 12, 1, '#0ff');
-  }
-
-  // T5: Wraith — ornate, triple engines, energy lines
-  else if (tier === 5) {
-    dp(3, -5, 10, 10, c.body);
-    dp(13, -2, 4, 4, c.cockpit);
-    dp(0, -5, 2, 2, c.engine);
-    dp(0, -1, 2, 2, c.engine);
-    dp(0, 3, 2, 2, c.engine);
-    dp(-2, -4, 2, 1, '#a0f');
-    dp(-3, 0, 3, 1, '#c4f');
-    dp(-2, 4, 2, 1, '#a0f');
-    dp(1, -hh + 1, 8, 2, c.wing);
-    dp(1, hh - 3, 8, 2, c.wing);
-    // Energy lines
-    dp(4, -4, 9, 1, c.stripe);
-    dp(4, -2, 9, 1, c.stripe);
-    dp(4, 2, 9, 1, c.stripe);
-    dp(4, 4, 9, 1, c.stripe);
-  }
-
-  // T6: Nova — heavy warship, wide hull, forward-swept wings
-  else if (tier === 6) {
-    dp(2, -6, 12, 12, c.body);
-    dp(3, -5, 10, 10, '#733');
-    dp(12, -3, 4, 6, c.body);
-    dp(14, -1, 3, 2, c.cockpit);
-    dp(6, -hh + 1, 8, 2, c.wing);
-    dp(6, hh - 3, 8, 2, c.wing);
-    dp(2, -hh + 3, 5, 2, c.wing);
-    dp(2, hh - 5, 5, 2, c.wing);
-    dp(-1, -4, 3, 8, c.engine);
-    dp(-3, -3, 2, 6, '#f40');
-    dp(5, -5, 1, 10, c.stripe);
-    dp(9, -4, 1, 8, c.stripe);
-  }
-
-  // T7: Supernova — slim crystalline body, translucent energy wings
-  else if (tier === 7) {
-    dp(4, -4, 9, 8, c.body);
-    dp(13, -2, 4, 4, c.cockpit);
-    dp(0, -2, 3, 4, c.engine);
-    dp(-2, -1, 2, 2, '#f8f');
-    // Energy wings (translucent)
-    ctx.globalAlpha = 0.25;
-    dp(-2, -hh, 14, 3, c.wing);
-    dp(-2, hh - 3, 14, 3, c.wing);
-    ctx.globalAlpha = 1.0;
-    dp(-2, -hh + 2, 14, 1, '#faf');
-    dp(-2, hh - 1, 14, 1, '#faf');
-    // Body accents
-    dp(5, -3, 7, 1, c.stripe);
-    dp(5, 3, 7, 1, c.stripe);
-    // Inner glow
-    ctx.globalAlpha = 0.15;
-    dp(5, -2, 7, 4, '#fff');
-    ctx.globalAlpha = 1.0;
-  }
-
-  // T8: Celestial — double-delta wings, golden accents, faint aura
-  else if (tier === 8) {
-    // Aura
-    ctx.globalAlpha = 0.08;
-    dp(-4, -hh - 3, w + 8, h + 6, c.engine);
-    ctx.globalAlpha = 1.0;
-    dp(2, -6, 12, 12, c.body);
-    dp(12, -3, 4, 6, c.body);
-    dp(14, -1, 3, 2, c.cockpit);
-    // Double-delta wings
-    dp(2, -hh + 1, 10, 2, c.wing);
-    dp(2, hh - 3, 10, 2, c.wing);
-    dp(0, -hh - 1, 7, 2, c.wing);
-    dp(0, hh - 1, 7, 2, c.wing);
-    // Engine
-    dp(0, -3, 3, 6, c.engine);
-    dp(-3, -2, 3, 4, '#fa0');
-    // Golden accents
-    dp(4, -5, 8, 1, '#fd0');
-    dp(4, 5, 8, 1, '#fd0');
-    dp(6, -4, 2, 8, '#fc0');
-  }
-
-  // T9: LEGENDARY — golden, radiant aura, elaborate multi-wing, engine array
-  else {
-    // Radiant aura
-    ctx.globalAlpha = 0.06;
-    dp(-6, -hh - 4, w + 12, h + 8, '#ff0');
-    ctx.globalAlpha = 0.12;
-    dp(-3, -hh - 2, w + 6, h + 4, '#fa0');
-    ctx.globalAlpha = 1.0;
-    // Golden hull
-    dp(1, -6, 14, 12, c.body);
-    dp(13, -3, 4, 6, c.body);
-    dp(15, -1, 3, 2, c.cockpit);
-    // Elaborate wings
-    dp(-2, -hh, 14, 3, c.wing);
-    dp(-2, hh - 3, 14, 3, c.wing);
-    dp(-2, -hh - 2, 5, 2, c.stripe);
-    dp(-2, hh, 5, 2, c.stripe);
-    // Multi-engine array
-    dp(0, -5, 2, 2, c.engine);
-    dp(0, -1, 2, 2, c.engine);
-    dp(0, 3, 2, 2, c.engine);
-    dp(-3, -4, 3, 1, '#ff0');
-    dp(-4, 0, 4, 1, '#ff8');
-    dp(-3, 4, 3, 1, '#ff0');
-    // Ornate details
-    dp(3, -5, 10, 1, '#fff');
-    dp(3, 5, 10, 1, '#fff');
-    dp(5, -4, 7, 1, c.stripe);
-    dp(5, 4, 7, 1, c.stripe);
-    dp(8, -1, 2, 2, '#fff');
-  }
-}
-
-function getShipColors(tier) {
-  const palettes = [
-    { body: '#556', cockpit: '#4af', wing: '#667', engine: '#c60', stripe: '#789' },
-    { body: '#457', cockpit: '#3cf', wing: '#568', engine: '#e80', stripe: '#5af' },
-    { body: '#246', cockpit: '#0ff', wing: '#358', engine: '#0cf', stripe: '#0ef' },
-    { body: '#353', cockpit: '#0ff', wing: '#464', engine: '#fc0', stripe: '#ff0' },
-    { body: '#224', cockpit: '#0ff', wing: '#335', engine: '#08f', stripe: '#0ff' },
-    { body: '#426', cockpit: '#c4f', wing: '#537', engine: '#a0f', stripe: '#d6f' },
-    { body: '#622', cockpit: '#fff', wing: '#833', engine: '#f40', stripe: '#f80' },
-    { body: '#a48', cockpit: '#fff', wing: '#c6a', engine: '#f8f', stripe: '#faf' },
-    { body: '#537', cockpit: '#ff0', wing: '#648', engine: '#fa0', stripe: '#fd0' },
-    { body: '#a80', cockpit: '#fff', wing: '#db0', engine: '#ff0', stripe: '#fff' },
-  ];
-  return palettes[Math.min(tier, palettes.length - 1)];
+  const t = Math.min(tier, 9);
+  shipDrawFns[t][v](dp, c, hh, w, ctx);
 }
 
 // --- Starfield ---
@@ -731,6 +896,8 @@ const game = {
   roundWinner: -1,
   flashTimers: [0, 0],
   explosions: [],
+  // Ship variant selections: [p1_variants[10], p2_variants[10]]
+  shipVariants: [new Array(10).fill(0), new Array(10).fill(0)],
 
   // Modifier system
   modifiers: {
@@ -811,6 +978,13 @@ function resetMatch() {
   const ready = bgImages.filter(img => img.complete && img.naturalWidth > 0);
   activeBg = ready.length > 0 ? ready[Math.floor(Math.random() * ready.length)] : null;
   bgScrollX = 0;
+
+  // Randomize ship variants for each tier for each player
+  for (let p = 0; p < 2; p++) {
+    for (let t = 0; t < 10; t++) {
+      game.shipVariants[p][t] = Math.floor(Math.random() * VARIANTS_PER_TIER);
+    }
+  }
 
   game.scores = [0, 0];
   game.modifiers.spawnTimer = randRange(MOD_SPAWN_MIN, MOD_SPAWN_MAX);
@@ -1405,26 +1579,92 @@ function handleHit(hitPlayerId) {
 // DRAWING — MODIFIERS
 // ============================================================
 
+// Gravity well ambient particles (persistent, generated once)
+const gravWellParticles = [];
+for (let i = 0; i < 40; i++) {
+  gravWellParticles.push({
+    x: Math.random() * NATIVE_W,
+    y: Math.random() * NATIVE_H,
+    speed: 0.3 + Math.random() * 0.7,
+    size: 1 + Math.random() * 2,
+    drift: (Math.random() - 0.5) * 20,
+  });
+}
+
 function drawGravityWellIndicator() {
   const gw = game.modifiers.gravityWell;
   if (!gw || gw.timer <= 0) return;
 
   const color = gw.isSlow ? '#f80' : '#0f0';
-  const label = gw.isSlow ? 'DRAG' : 'SURGE';
+  const colorDim = gw.isSlow ? '#a50' : '#080';
+  const label = gw.isSlow ? 'GRAVITY WELL — DRAG' : 'GRAVITY WELL — SURGE';
   const pct = gw.timer / gw.maxDuration;
-  const pulse = Math.sin(gw.timer * 6) * 0.15 + 0.2;
+  const t = gw.maxDuration - gw.timer; // elapsed time
+  const pulse = Math.sin(t * 4) * 0.15 + 0.25;
 
-  // Pulsing border
   ctx.save();
-  ctx.strokeStyle = color;
-  ctx.globalAlpha = pulse;
-  ctx.lineWidth = 3 * scale;
-  ctx.strokeRect(2 * scale, 2 * scale, (NATIVE_W - 4) * scale, (NATIVE_H - 4) * scale);
+
+  // Animated vignette — colored gradient from edges
+  const cw = canvas.width;
+  const ch = canvas.height;
+
+  // Top edge
+  const gradT = ctx.createLinearGradient(0, 0, 0, ch * 0.15);
+  gradT.addColorStop(0, color);
+  gradT.addColorStop(1, 'transparent');
+  ctx.globalAlpha = pulse * 0.4;
+  ctx.fillStyle = gradT;
+  ctx.fillRect(0, 0, cw, ch * 0.15);
+
+  // Bottom edge
+  const gradB = ctx.createLinearGradient(0, ch, 0, ch * 0.85);
+  gradB.addColorStop(0, color);
+  gradB.addColorStop(1, 'transparent');
+  ctx.fillStyle = gradB;
+  ctx.fillRect(0, ch * 0.85, cw, ch * 0.15);
+
+  // Left edge
+  const gradL = ctx.createLinearGradient(0, 0, cw * 0.08, 0);
+  gradL.addColorStop(0, color);
+  gradL.addColorStop(1, 'transparent');
+  ctx.fillStyle = gradL;
+  ctx.fillRect(0, 0, cw * 0.08, ch);
+
+  // Right edge
+  const gradR = ctx.createLinearGradient(cw, 0, cw * 0.92, 0);
+  gradR.addColorStop(0, color);
+  gradR.addColorStop(1, 'transparent');
+  ctx.fillStyle = gradR;
+  ctx.fillRect(cw * 0.92, 0, cw * 0.08, ch);
+
+  // Drifting particles — speed affected by multiplier
+  ctx.globalAlpha = 0.6;
+  const particleSpeed = gw.isSlow ? 0.3 : 2.5;
+  for (const p of gravWellParticles) {
+    // Move horizontally (like space dust showing speed)
+    p.x -= p.speed * particleSpeed;
+    p.y += Math.sin(t * 2 + p.drift) * 0.3;
+    if (p.x < -5) { p.x = NATIVE_W + 5; p.y = Math.random() * NATIVE_H; }
+
+    const alpha = 0.3 + Math.sin(t * 3 + p.drift * 10) * 0.2;
+    ctx.globalAlpha = alpha;
+
+    if (gw.isSlow) {
+      // Drag: round blobs, sluggish
+      px(p.x, p.y, p.size, p.size, color);
+    } else {
+      // Surge: horizontal streaks showing speed
+      const streakLen = 4 + p.speed * 6;
+      px(p.x, p.y, streakLen, 1, color);
+    }
+  }
+
   ctx.globalAlpha = 1.0;
   ctx.restore();
 
+  // HUD text + timer bar
   drawText(`${label} ${gw.speedMultiplier.toFixed(1)}x`, NATIVE_W / 2, 25, color, 8);
-  const barW = 60;
+  const barW = 80;
   px(NATIVE_W / 2 - barW / 2, 31, barW, 2, '#222');
   px(NATIVE_W / 2 - barW / 2, 31, barW * pct, 2, color);
 }
@@ -1610,8 +1850,8 @@ function draw(dt) {
   drawBlackHole();
 
   // Ships
-  if (p1) drawShip(p1.x, p1.y, p1.w, p1.h, true, game.scores[0], game.flashTimers[0] > 0);
-  if (p2) drawShip(p2.x, p2.y, p2.w, p2.h, false, game.scores[1], game.flashTimers[1] > 0);
+  if (p1) drawShip(p1.x, p1.y, p1.w, p1.h, true, game.scores[0], game.shipVariants[0][game.scores[0]], game.flashTimers[0] > 0);
+  if (p2) drawShip(p2.x, p2.y, p2.w, p2.h, false, game.scores[1], game.shipVariants[1][game.scores[1]], game.flashTimers[1] > 0);
 
   // Shield orb
   if (shield) {
@@ -2078,6 +2318,7 @@ function serializeState() {
       dmd: mods.overclock.debuffMaxDuration,
       dp: mods.overclock.debuffPattern
     } : null,
+    sv: game.shipVariants,
   };
   return state;
 }
@@ -2181,6 +2422,9 @@ function applyState(s) {
   } else {
     game.modifiers.overclock = null;
   }
+
+  // Ship variants
+  if (s.sv) game.shipVariants = s.sv;
 
   // Handle UI for state transitions from host
   if (s.gs === 'roundEnd' && game._lastState !== 'roundEnd') {
