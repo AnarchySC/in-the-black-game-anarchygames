@@ -96,10 +96,8 @@
 
 <script>
 // ============================================================
-// IN THE BLACK — V1
-// Designed for future WebSocket multiplayer integration.
-// All game state lives in `game` object. Input and state
-// updates are separated for easy network sync.
+// IN THE BLACK — V2
+// Now with match modifiers: Gravity Well, Black Hole, Overclock
 // ============================================================
 
 const canvas = document.getElementById('game');
@@ -110,21 +108,51 @@ const NATIVE_W = 640;
 const NATIVE_H = 400;
 const SHIP_BASE_W = 18;
 const SHIP_BASE_H = 28;
-const SHIP_GROWTH = 2; // pixels added to height per point
+const SHIP_GROWTH = 2;
 const BULLET_W = 6;
 const BULLET_H = 3;
-const BULLET_SPEED = 320; // px/sec
-const SHIELD_RADIUS = 30; // circle shield
-const SHIELD_W = SHIELD_RADIUS * 2; // bounding box for collision
+const BULLET_SPEED = 320;
+const SHIELD_RADIUS = 30;
+const SHIELD_W = SHIELD_RADIUS * 2;
 const SHIELD_H = SHIELD_RADIUS * 2;
-const SHIELD_SPEED_X = 120; // horizontal drift px/sec
-const SHIELD_SPEED_Y = 40; // vertical drift px/sec
-const SHIELD_LOCK_TIME = 2.0; // seconds
-const SHIP_SPEED = 200; // px/sec
-const FIRE_RATE = 3.5; // shots per second (tunable)
+const SHIELD_SPEED_X = 120;
+const SHIELD_SPEED_Y = 40;
+const SHIELD_LOCK_TIME = 2.0;
+const SHIP_SPEED = 200;
+const FIRE_RATE = 3.5;
 const FIRE_INTERVAL = 1.0 / FIRE_RATE;
-const SHIP_MARGIN = 40; // distance from edge
+const SHIP_MARGIN = 40;
 const WIN_SCORE = 10;
+
+// --- Modifier Constants ---
+const MOD_SPAWN_MIN = 20;
+const MOD_SPAWN_MAX = 40;
+const MOD_ANNOUNCE_TIME = 2.0;
+
+// Gravity Well
+const GRAV_WELL_DURATION_MIN = 5;
+const GRAV_WELL_DURATION_MAX = 8;
+const GRAV_WELL_SLOW_MIN = 0.4;
+const GRAV_WELL_SLOW_MAX = 0.7;
+const GRAV_WELL_FAST_MIN = 1.5;
+const GRAV_WELL_FAST_MAX = 2.2;
+
+// Black Hole
+const BLACK_HOLE_DURATION_MIN = 6;
+const BLACK_HOLE_DURATION_MAX = 10;
+const BLACK_HOLE_PULL_MIN = 30;
+const BLACK_HOLE_PULL_MAX = 160;
+const BLACK_HOLE_BULLET_PULL_MIN = 15;
+const BLACK_HOLE_BULLET_PULL_MAX = 90;
+const BLACK_HOLE_RADIUS = 18;
+
+// Overclock
+const OVERCLOCK_DURATION_MIN = 4;
+const OVERCLOCK_DURATION_MAX = 6;
+const OVERCLOCK_MULTI_MIN = 2.0;
+const OVERCLOCK_MULTI_MAX = 4.0;
+const OVERCLOCK_DEBUFF_MIN = 3;
+const OVERCLOCK_DEBUFF_MAX = 4;
 
 // --- Pixel scaling ---
 let scale = 1;
@@ -138,6 +166,11 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 resize();
+
+// --- Utility ---
+function randRange(min, max) {
+  return min + Math.random() * (max - min);
+}
 
 // --- Pixel drawing helpers ---
 function px(x, y, w, h, color) {
@@ -153,8 +186,7 @@ function drawText(text, x, y, color, size) {
   ctx.fillText(text, x * scale, y * scale);
 }
 
-// --- Ship pixel art (drawn procedurally) ---
-// Ship facing right (P1) or left (P2)
+// --- Ship pixel art ---
 function drawShip(x, y, w, h, facingRight, tier, flash) {
   const colors = getShipColors(tier);
   const cx = x + w / 2;
@@ -165,22 +197,14 @@ function drawShip(x, y, w, h, facingRight, tier, flash) {
     return;
   }
 
-  // Body
   px(x + 2, y + 2, w - 4, h - 4, colors.body);
-
-  // Cockpit
   const cockpitX = facingRight ? x + w - 5 : x + 1;
   px(cockpitX, cy - 3, 4, 6, colors.cockpit);
-
-  // Wings
   px(x, y, w * 0.4, 3, colors.wing);
   px(x, y + h - 3, w * 0.4, 3, colors.wing);
-
-  // Engine glow
   const engineX = facingRight ? x - 2 : x + w;
   px(engineX, cy - 2, 3, 4, colors.engine);
 
-  // Tier stripes
   if (tier > 0) {
     const stripeCount = Math.min(tier, 5);
     for (let i = 0; i < stripeCount; i++) {
@@ -188,20 +212,15 @@ function drawShip(x, y, w, h, facingRight, tier, flash) {
       px(x + 4, sy, w - 8, 1, colors.stripe);
     }
   }
-
-  // Extra details at higher tiers
   if (tier >= 3) {
-    // Side cannons
     px(facingRight ? x + w - 2 : x - 1, y - 2, 3, 2, colors.wing);
     px(facingRight ? x + w - 2 : x - 1, y + h, 3, 2, colors.wing);
   }
   if (tier >= 6) {
-    // Shield plating
     px(x + 1, y + 1, w - 2, 1, colors.stripe);
     px(x + 1, y + h - 2, w - 2, 1, colors.stripe);
   }
   if (tier >= 8) {
-    // Glow aura
     ctx.globalAlpha = 0.15;
     px(x - 3, y - 3, w + 6, h + 6, colors.engine);
     ctx.globalAlpha = 1.0;
@@ -210,21 +229,21 @@ function drawShip(x, y, w, h, facingRight, tier, flash) {
 
 function getShipColors(tier) {
   const palettes = [
-    { body: '#445', cockpit: '#0af', wing: '#556', engine: '#f80', stripe: '#0af' },         // 0 - starter
-    { body: '#446', cockpit: '#0bf', wing: '#668', engine: '#fa0', stripe: '#0cf' },         // 1
-    { body: '#448', cockpit: '#0cf', wing: '#77a', engine: '#fb0', stripe: '#0ef' },         // 2
-    { body: '#358', cockpit: '#0ff', wing: '#88c', engine: '#fc0', stripe: '#ff0' },         // 3
-    { body: '#36a', cockpit: '#2ff', wing: '#99d', engine: '#fd0', stripe: '#ff2' },         // 4
-    { body: '#46c', cockpit: '#4ff', wing: '#aae', engine: '#fe2', stripe: '#fa0' },         // 5
-    { body: '#f06', cockpit: '#fff', wing: '#f39', engine: '#ff0', stripe: '#0ff' },         // 6
-    { body: '#f0a', cockpit: '#fff', wing: '#f6c', engine: '#ff4', stripe: '#0ff' },         // 7
-    { body: '#c0f', cockpit: '#fff', wing: '#d4f', engine: '#ff8', stripe: '#ff0' },         // 8
-    { body: '#ff0', cockpit: '#fff', wing: '#ffa', engine: '#f0f', stripe: '#0ff' },         // 9 - max, legendary
+    { body: '#445', cockpit: '#0af', wing: '#556', engine: '#f80', stripe: '#0af' },
+    { body: '#446', cockpit: '#0bf', wing: '#668', engine: '#fa0', stripe: '#0cf' },
+    { body: '#448', cockpit: '#0cf', wing: '#77a', engine: '#fb0', stripe: '#0ef' },
+    { body: '#358', cockpit: '#0ff', wing: '#88c', engine: '#fc0', stripe: '#ff0' },
+    { body: '#36a', cockpit: '#2ff', wing: '#99d', engine: '#fd0', stripe: '#ff2' },
+    { body: '#46c', cockpit: '#4ff', wing: '#aae', engine: '#fe2', stripe: '#fa0' },
+    { body: '#f06', cockpit: '#fff', wing: '#f39', engine: '#ff0', stripe: '#0ff' },
+    { body: '#f0a', cockpit: '#fff', wing: '#f6c', engine: '#ff4', stripe: '#0ff' },
+    { body: '#c0f', cockpit: '#fff', wing: '#d4f', engine: '#ff8', stripe: '#ff0' },
+    { body: '#ff0', cockpit: '#fff', wing: '#ffa', engine: '#f0f', stripe: '#0ff' },
   ];
   return palettes[Math.min(tier, palettes.length - 1)];
 }
 
-// --- Starfield background ---
+// --- Starfield ---
 const stars = [];
 for (let i = 0; i < 80; i++) {
   stars.push({
@@ -246,9 +265,8 @@ function drawStarfield(dt) {
 }
 
 // --- Game state ---
-// Exported as a flat object for easy serialization (multiplayer sync)
 const game = {
-  state: 'menu', // menu, countdown, playing, roundEnd, gameOver
+  state: 'menu',
   countdownTimer: 0,
 
   p1: null,
@@ -259,6 +277,16 @@ const game = {
   scores: [0, 0],
   roundWinner: -1,
   flashTimers: [0, 0],
+
+  // Modifier system
+  modifiers: {
+    spawnTimer: 0,
+    active: null,
+    announcement: null,
+    gravityWell: null,
+    blackHole: null,
+    overclock: null,
+  },
 };
 
 function createPlayer(id) {
@@ -276,9 +304,8 @@ function createPlayer(id) {
   };
 }
 
-function createShield(lockSide) {
-  // lockSide: -1 = none, 0 = lock in front of P1, 1 = lock in front of P2
-  const s = {
+function createShield() {
+  return {
     x: NATIVE_W / 2 - SHIELD_RADIUS,
     y: NATIVE_H / 2 - SHIELD_RADIUS,
     w: SHIELD_RADIUS * 2,
@@ -289,17 +316,25 @@ function createShield(lockSide) {
     locked: false,
     lockTimer: 0,
     lockSide: -1,
-    colorTime: 0, // color cycle timer
+    colorTime: 0,
   };
-  return s;
 }
 
 function resetRound() {
   game.p1 = createPlayer(0);
   game.p2 = createPlayer(1);
-  game.shield = createShield(-1);
+  game.shield = createShield();
   game.bullets = [];
   game.flashTimers = [0, 0];
+
+  // Reset modifiers
+  game.modifiers.spawnTimer = randRange(MOD_SPAWN_MIN, MOD_SPAWN_MAX);
+  game.modifiers.active = null;
+  game.modifiers.announcement = null;
+  game.modifiers.gravityWell = null;
+  game.modifiers.blackHole = null;
+  game.modifiers.overclock = null;
+
   game.state = 'countdown';
   game.countdownTimer = 2.0;
 }
@@ -311,7 +346,6 @@ const input = {
   mouseWheelDelta: 0,
 };
 
-// Keyboard
 document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   switch (e.code) {
@@ -334,21 +368,17 @@ document.addEventListener('keyup', (e) => {
   }
 });
 
-// Mouse wheel — P1 movement
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   input.mouseWheelDelta += e.deltaY;
 }, { passive: false });
 
-// Mouse click — P1 fire
 canvas.addEventListener('mousedown', (e) => {
   if (e.button === 0) { input.p1Fire = true; input.p1FireOnce = true; }
 });
 canvas.addEventListener('mouseup', (e) => {
   if (e.button === 0) { input.p1Fire = false; }
 });
-
-// Prevent context menu on canvas
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // --- Collision ---
@@ -356,7 +386,6 @@ function aabb(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
 
-// Circle vs AABB collision (for shield orb vs bullets/ships)
 function circleRect(cx, cy, cr, rx, ry, rw, rh) {
   const nearX = Math.max(rx, Math.min(cx, rx + rw));
   const nearY = Math.max(ry, Math.min(cy, ry + rh));
@@ -377,23 +406,214 @@ function fireBullet(player) {
   const bx = isP1 ? player.x + player.w : player.x - BULLET_W;
   const by = player.y + player.h / 2 - BULLET_H / 2;
   game.bullets.push({
-    x: bx,
-    y: by,
-    w: BULLET_W,
-    h: BULLET_H,
+    x: bx, y: by,
+    w: BULLET_W, h: BULLET_H,
     vx: isP1 ? BULLET_SPEED : -BULLET_SPEED,
     vy: 0,
     owner: player.id,
   });
 }
 
-// --- Update ---
+// ============================================================
+// MODIFIER SYSTEM
+// ============================================================
+
+function spawnModifier() {
+  const types = ['gravityWell', 'blackHole', 'overclock'];
+  const type = types[Math.floor(Math.random() * types.length)];
+
+  game.modifiers.gravityWell = null;
+  game.modifiers.blackHole = null;
+  game.modifiers.overclock = null;
+
+  switch (type) {
+    case 'gravityWell': {
+      const isSlow = Math.random() < 0.5;
+      const multiplier = isSlow
+        ? randRange(GRAV_WELL_SLOW_MIN, GRAV_WELL_SLOW_MAX)
+        : randRange(GRAV_WELL_FAST_MIN, GRAV_WELL_FAST_MAX);
+      const duration = randRange(GRAV_WELL_DURATION_MIN, GRAV_WELL_DURATION_MAX);
+      game.modifiers.gravityWell = {
+        speedMultiplier: multiplier,
+        timer: duration,
+        maxDuration: duration,
+        isSlow,
+      };
+      game.modifiers.active = { type: 'gravityWell' };
+      const label = isSlow ? 'GRAVITY WELL — DRAG' : 'GRAVITY WELL — SURGE';
+      game.modifiers.announcement = { text: label, timer: MOD_ANNOUNCE_TIME };
+      break;
+    }
+    case 'blackHole': {
+      const bx = randRange(NATIVE_W * 0.2, NATIVE_W * 0.8);
+      const by = randRange(NATIVE_H * 0.15, NATIVE_H * 0.85);
+      const duration = randRange(BLACK_HOLE_DURATION_MIN, BLACK_HOLE_DURATION_MAX);
+      const pullStrength = randRange(BLACK_HOLE_PULL_MIN, BLACK_HOLE_PULL_MAX);
+      const bulletPull = randRange(BLACK_HOLE_BULLET_PULL_MIN, BLACK_HOLE_BULLET_PULL_MAX);
+      game.modifiers.blackHole = {
+        x: bx, y: by,
+        pullStrength, bulletPull,
+        timer: duration,
+        maxDuration: duration,
+        angle: 0,
+      };
+      game.modifiers.active = { type: 'blackHole' };
+      const intensity = pullStrength > (BLACK_HOLE_PULL_MIN + BLACK_HOLE_PULL_MAX) / 2 ? 'STRONG' : 'WEAK';
+      game.modifiers.announcement = { text: `BLACK HOLE — ${intensity}`, timer: MOD_ANNOUNCE_TIME };
+      break;
+    }
+    case 'overclock': {
+      const multi = randRange(OVERCLOCK_MULTI_MIN, OVERCLOCK_MULTI_MAX);
+      const duration = randRange(OVERCLOCK_DURATION_MIN, OVERCLOCK_DURATION_MAX);
+      const debuffDuration = randRange(OVERCLOCK_DEBUFF_MIN, OVERCLOCK_DEBUFF_MAX);
+      game.modifiers.overclock = {
+        fireMultiplier: multi,
+        timer: duration,
+        maxDuration: duration,
+        debuff: false,
+        debuffTimer: 0,
+        debuffMaxDuration: debuffDuration,
+        debuffPattern: null,
+      };
+      game.modifiers.active = { type: 'overclock' };
+      game.modifiers.announcement = { text: `OVERCLOCK — ${multi.toFixed(1)}x FIRE`, timer: MOD_ANNOUNCE_TIME };
+      break;
+    }
+  }
+
+  game.modifiers.spawnTimer = randRange(MOD_SPAWN_MIN, MOD_SPAWN_MAX);
+}
+
+function generateDebuffPattern(duration) {
+  const pattern = [];
+  let t = 0;
+  while (t < duration) {
+    const burstCount = Math.floor(Math.random() * 3) + 1;
+    const burstInterval = 0.1 + Math.random() * 0.15;
+    for (let i = 0; i < burstCount; i++) {
+      pattern.push({ time: t, canFire: true });
+      t += burstInterval;
+    }
+    t += 0.5 + Math.random() * 1.0;
+    pattern.push({ time: t, canFire: false });
+  }
+  return pattern;
+}
+
+function isDebuffAllowingFire(overclock) {
+  if (!overclock || !overclock.debuff || !overclock.debuffPattern) return true;
+  const elapsed = overclock.debuffMaxDuration - overclock.debuffTimer;
+  let canFire = false;
+  for (const entry of overclock.debuffPattern) {
+    if (entry.time <= elapsed) canFire = entry.canFire;
+    else break;
+  }
+  return canFire;
+}
+
+function getEffectiveSpeedMultiplier() {
+  const gw = game.modifiers.gravityWell;
+  return (gw && gw.timer > 0) ? gw.speedMultiplier : 1.0;
+}
+
+function getEffectiveFireInterval() {
+  const oc = game.modifiers.overclock;
+  if (oc && !oc.debuff && oc.timer > 0) return FIRE_INTERVAL / oc.fireMultiplier;
+  return FIRE_INTERVAL;
+}
+
+function updateModifiers(dt) {
+  const mods = game.modifiers;
+
+  // Announcement timer
+  if (mods.announcement) {
+    mods.announcement.timer -= dt;
+    if (mods.announcement.timer <= 0) mods.announcement = null;
+  }
+
+  // No active modifier — count down to next spawn
+  if (!mods.active) {
+    mods.spawnTimer -= dt;
+    if (mods.spawnTimer <= 0) spawnModifier();
+    return;
+  }
+
+  // Update active modifier
+  switch (mods.active.type) {
+    case 'gravityWell': {
+      const gw = mods.gravityWell;
+      if (gw) {
+        gw.timer -= dt;
+        if (gw.timer <= 0) { mods.gravityWell = null; mods.active = null; }
+      }
+      break;
+    }
+    case 'blackHole': {
+      const bh = mods.blackHole;
+      if (bh) {
+        bh.timer -= dt;
+        bh.angle += dt * 2.5;
+
+        // Pull players vertically toward the black hole
+        for (const p of [game.p1, game.p2]) {
+          if (!p) continue;
+          const pcy = p.y + p.h / 2;
+          const dy = bh.y - pcy;
+          const dist = Math.abs(dy);
+          if (dist > 2) {
+            const pull = bh.pullStrength * Math.sign(dy) * Math.min(1, 200 / (dist + 50));
+            p.y += pull * dt;
+            p.y = Math.max(0, Math.min(NATIVE_H - p.h, p.y));
+          }
+        }
+
+        // Bend bullet trajectories
+        for (const b of game.bullets) {
+          const bcx = b.x + b.w / 2;
+          const bcy = b.y + b.h / 2;
+          const dx = bh.x - bcx;
+          const dy = bh.y - bcy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > 5) {
+            const force = bh.bulletPull * (150 / (dist + 30));
+            b.vx += (dx / dist) * force * dt;
+            b.vy += (dy / dist) * force * dt;
+          }
+        }
+
+        if (bh.timer <= 0) { mods.blackHole = null; mods.active = null; }
+      }
+      break;
+    }
+    case 'overclock': {
+      const oc = mods.overclock;
+      if (oc) {
+        if (!oc.debuff) {
+          oc.timer -= dt;
+          if (oc.timer <= 0) {
+            oc.debuff = true;
+            oc.debuffTimer = oc.debuffMaxDuration;
+            oc.debuffPattern = generateDebuffPattern(oc.debuffMaxDuration);
+            mods.announcement = { text: 'SYSTEMS BURNOUT', timer: MOD_ANNOUNCE_TIME };
+          }
+        } else {
+          oc.debuffTimer -= dt;
+          if (oc.debuffTimer <= 0) { mods.overclock = null; mods.active = null; }
+        }
+      }
+      break;
+    }
+  }
+}
+
+// ============================================================
+// UPDATE
+// ============================================================
+
 function update(dt) {
   if (game.state === 'countdown') {
     game.countdownTimer -= dt;
-    if (game.countdownTimer <= 0) {
-      game.state = 'playing';
-    }
+    if (game.countdownTimer <= 0) game.state = 'playing';
     return;
   }
 
@@ -403,41 +623,45 @@ function update(dt) {
   const p2 = game.p2;
   const shield = game.shield;
 
+  // Update modifiers
+  updateModifiers(dt);
+
+  // Effective multipliers
+  const speedMult = getEffectiveSpeedMultiplier();
+  const effectiveFireInterval = getEffectiveFireInterval();
+  const oc = game.modifiers.overclock;
+  const debuffAllowsFire = !oc || !oc.debuff || isDebuffAllowingFire(oc);
+
   // --- Player movement ---
-  // P1
   let p1Move = 0;
   if (input.p1Up) p1Move -= 1;
   if (input.p1Down) p1Move += 1;
-  // Mouse wheel input
   if (Math.abs(input.mouseWheelDelta) > 2) {
     p1Move += Math.sign(input.mouseWheelDelta) * Math.min(Math.abs(input.mouseWheelDelta) / 30, 1);
-    input.mouseWheelDelta *= 0.7; // decay
+    input.mouseWheelDelta *= 0.7;
   } else {
     input.mouseWheelDelta = 0;
   }
-  p1.y += p1Move * SHIP_SPEED * dt;
+  p1.y += p1Move * SHIP_SPEED * speedMult * dt;
   p1.y = Math.max(0, Math.min(NATIVE_H - p1.h, p1.y));
 
-  // P2
   let p2Move = 0;
   if (input.p2Up) p2Move -= 1;
   if (input.p2Down) p2Move += 1;
-  p2.y += p2Move * SHIP_SPEED * dt;
+  p2.y += p2Move * SHIP_SPEED * speedMult * dt;
   p2.y = Math.max(0, Math.min(NATIVE_H - p2.h, p2.y));
 
   // --- Firing ---
-  // P1
   p1.fireCooldown -= dt;
-  if ((input.p1Fire || input.p1FireOnce) && p1.fireCooldown <= 0 && p1.alive) {
+  if ((input.p1Fire || input.p1FireOnce) && p1.fireCooldown <= 0 && p1.alive && debuffAllowsFire) {
     fireBullet(p1);
-    p1.fireCooldown = FIRE_INTERVAL;
+    p1.fireCooldown = effectiveFireInterval;
     input.p1FireOnce = false;
   }
-  // P2
   p2.fireCooldown -= dt;
-  if ((input.p2Fire || input.p2FireOnce) && p2.fireCooldown <= 0 && p2.alive) {
+  if ((input.p2Fire || input.p2FireOnce) && p2.fireCooldown <= 0 && p2.alive && debuffAllowsFire) {
     fireBullet(p2);
-    p2.fireCooldown = FIRE_INTERVAL;
+    p2.fireCooldown = effectiveFireInterval;
     input.p2FireOnce = false;
   }
 
@@ -445,20 +669,17 @@ function update(dt) {
   if (shield.locked) {
     shield.lockTimer -= dt;
     if (shield.lockTimer <= 0) {
-      // Resume movement — push away from the protected player
       const wasLockedSide = shield.lockSide;
       shield.vx = SHIELD_SPEED_X * (wasLockedSide === 0 ? 1 : -1);
       shield.vy = SHIELD_SPEED_Y * (Math.random() * 2 - 1);
       shield.locked = false;
       shield.lockSide = -1;
     } else {
-      // Keep shield locked in front of the protected player
       const protectedPlayer = shield.lockSide === 0 ? p1 : p2;
       const targetX = shield.lockSide === 0
         ? protectedPlayer.x + protectedPlayer.w + 8 - shield.r
         : protectedPlayer.x - shield.r * 2 - 8;
       const targetY = protectedPlayer.y + protectedPlayer.h / 2 - shield.r;
-      // Smoothly follow
       shield.x += (targetX - shield.x) * 8 * dt;
       shield.y += (targetY - shield.y) * 8 * dt;
     }
@@ -466,93 +687,70 @@ function update(dt) {
     shield.x += shield.vx * dt;
     shield.y += shield.vy * dt;
 
-    // Vertical bounce
     if (shield.y <= 0) { shield.y = 0; shield.vy = Math.abs(shield.vy); }
     if (shield.y + shield.h >= NATIVE_H) { shield.y = NATIVE_H - shield.h; shield.vy = -Math.abs(shield.vy); }
 
-    // --- Player-shield friction ---
     if (shieldCollides(shield, p1)) {
-      const p1CenterY = p1.y + p1.h / 2;
-      const shieldCenterY = shield.y + shield.r;
-      const diff = shieldCenterY - p1CenterY;
-      shield.vy += diff * 0.5; // nudge based on relative position
-      shield.vy += p1Move * 30; // player movement transfers to shield
-      shield.vx = Math.abs(shield.vx); // push away from P1
+      const diff = (shield.y + shield.r) - (p1.y + p1.h / 2);
+      shield.vy += diff * 0.5;
+      shield.vy += p1Move * 30;
+      shield.vx = Math.abs(shield.vx);
     }
     if (shieldCollides(shield, p2)) {
-      const p2CenterY = p2.y + p2.h / 2;
-      const shieldCenterY = shield.y + shield.r;
-      const diff = shieldCenterY - p2CenterY;
+      const diff = (shield.y + shield.r) - (p2.y + p2.h / 2);
       shield.vy += diff * 0.5;
       shield.vy += p2Move * 30;
-      shield.vx = -Math.abs(shield.vx); // push away from P2
+      shield.vx = -Math.abs(shield.vx);
     }
 
-    // Clamp shield vy
     shield.vy = Math.max(-150, Math.min(150, shield.vy));
 
-    // --- Shield passes a player → lock ---
     const p1Edge = p1.x;
     const p2Edge = p2.x + p2.w;
 
     if (shield.x + shield.w < p1Edge - 10) {
-      // Shield passed P1 → lock in front of P2 (P2 gets protection)
       shield.locked = true;
       shield.lockTimer = SHIELD_LOCK_TIME;
       shield.lockSide = 1;
-      shield.vx = 0;
-      shield.vy = 0;
+      shield.vx = 0; shield.vy = 0;
     } else if (shield.x > p2Edge + 10) {
-      // Shield passed P2 → lock in front of P1 (P1 gets protection)
       shield.locked = true;
       shield.lockTimer = SHIELD_LOCK_TIME;
       shield.lockSide = 0;
-      shield.vx = 0;
-      shield.vy = 0;
+      shield.vx = 0; shield.vy = 0;
     }
   }
 
-  // --- Bullets update ---
+  // --- Bullets ---
   for (let i = game.bullets.length - 1; i >= 0; i--) {
     const b = game.bullets[i];
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
-    // Off screen
     if (b.x < -20 || b.x > NATIVE_W + 20 || b.y < -20 || b.y > NATIVE_H + 20) {
       game.bullets.splice(i, 1);
       continue;
     }
 
-    // Bullet vs shield (circle collision)
     if (shieldCollides(shield, b)) {
       game.bullets.splice(i, 1);
-      // Small shield nudge from bullet impact
-      if (!shield.locked) {
-        shield.vy += (Math.random() - 0.5) * 20;
-      }
+      if (!shield.locked) shield.vy += (Math.random() - 0.5) * 20;
       continue;
     }
 
-    // Bullet vs players
     if (b.owner === 0 && aabb(b, p2)) {
-      // P1 hit P2
       game.bullets.splice(i, 1);
       handleHit(1);
       continue;
     }
     if (b.owner === 1 && aabb(b, p1)) {
-      // P2 hit P1
       game.bullets.splice(i, 1);
       handleHit(0);
       continue;
     }
   }
 
-  // Shield color cycle
   shield.colorTime += dt;
-
-  // Flash timers
   game.flashTimers[0] = Math.max(0, game.flashTimers[0] - dt);
   game.flashTimers[1] = Math.max(0, game.flashTimers[1] - dt);
 }
@@ -576,15 +774,170 @@ function handleHit(hitPlayerId) {
   }
 }
 
-// --- Drawing ---
-function draw(dt) {
-  // Clear
-  px(0, 0, NATIVE_W, NATIVE_H, '#080810');
+// ============================================================
+// DRAWING — MODIFIERS
+// ============================================================
 
-  // Starfield
+function drawGravityWellIndicator() {
+  const gw = game.modifiers.gravityWell;
+  if (!gw || gw.timer <= 0) return;
+
+  const color = gw.isSlow ? '#f80' : '#0f0';
+  const label = gw.isSlow ? 'DRAG' : 'SURGE';
+  const pct = gw.timer / gw.maxDuration;
+  const pulse = Math.sin(gw.timer * 6) * 0.15 + 0.2;
+
+  // Pulsing border
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = pulse;
+  ctx.lineWidth = 3 * scale;
+  ctx.strokeRect(2 * scale, 2 * scale, (NATIVE_W - 4) * scale, (NATIVE_H - 4) * scale);
+  ctx.globalAlpha = 1.0;
+  ctx.restore();
+
+  drawText(`${label} ${gw.speedMultiplier.toFixed(1)}x`, NATIVE_W / 2, 25, color, 8);
+  const barW = 60;
+  px(NATIVE_W / 2 - barW / 2, 31, barW, 2, '#222');
+  px(NATIVE_W / 2 - barW / 2, 31, barW * pct, 2, color);
+}
+
+function drawBlackHole() {
+  const bh = game.modifiers.blackHole;
+  if (!bh || bh.timer <= 0) return;
+
+  const cx = bh.x * scale;
+  const cy = bh.y * scale;
+  const r = BLACK_HOLE_RADIUS * scale;
+  const fadeIn = Math.min(1, (bh.maxDuration - bh.timer + 0.5) * 2);
+  const fadeOut = Math.min(1, bh.timer * 2);
+  const alpha = Math.min(fadeIn, fadeOut);
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // Swirling rings
+  for (let i = 3; i >= 0; i--) {
+    const ringR = r + (i * 8 * scale);
+    ctx.beginPath();
+    ctx.arc(cx, cy, ringR, bh.angle + i * 0.5, bh.angle + i * 0.5 + Math.PI * 1.5);
+    ctx.strokeStyle = `rgba(120, 60, 200, ${0.08 + i * 0.03})`;
+    ctx.lineWidth = 2 * scale;
+    ctx.stroke();
+  }
+
+  // Accretion disk
+  ctx.beginPath();
+  ctx.ellipse(cx, cy, r + 4 * scale, (r + 4 * scale) * 0.4, bh.angle * 0.7, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(200, 100, 255, 0.3)';
+  ctx.lineWidth = 2 * scale;
+  ctx.stroke();
+
+  // Dark core
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.8, 0, Math.PI * 2);
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r * 0.8);
+  grad.addColorStop(0, 'rgba(0, 0, 0, 0.95)');
+  grad.addColorStop(0.7, 'rgba(10, 0, 30, 0.8)');
+  grad.addColorStop(1, 'rgba(40, 0, 80, 0.3)');
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Center glow
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2 * scale, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(180, 120, 255, ${0.5 + Math.sin(bh.angle * 3) * 0.2})`;
+  ctx.fill();
+
+  // Orbiting particles
+  for (let i = 0; i < 6; i++) {
+    const a = bh.angle * (1.5 + i * 0.3) + (i * Math.PI * 2 / 6);
+    const orbitR = r * (0.5 + (i % 3) * 0.3);
+    const ppx = cx + Math.cos(a) * orbitR;
+    const ppy = cy + Math.sin(a) * orbitR * 0.6;
+    ctx.beginPath();
+    ctx.arc(ppx, ppy, 1.5 * scale, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(200, 150, 255, ${0.4 + Math.sin(a) * 0.2})`;
+    ctx.fill();
+  }
+
+  ctx.globalAlpha = 1.0;
+  ctx.restore();
+
+  // Timer bar
+  const pct = bh.timer / bh.maxDuration;
+  const barW = 30;
+  px(bh.x - barW / 2, bh.y + BLACK_HOLE_RADIUS + 6, barW, 2, '#222');
+  px(bh.x - barW / 2, bh.y + BLACK_HOLE_RADIUS + 6, barW * pct, 2, '#a060ff');
+}
+
+function drawOverclockIndicator() {
+  const oc = game.modifiers.overclock;
+  if (!oc) return;
+
+  if (!oc.debuff && oc.timer > 0) {
+    const color = '#ff0';
+    const pulse = Math.sin(oc.timer * 10) * 0.2 + 0.4;
+    drawText(`OVERCLOCK ${oc.fireMultiplier.toFixed(1)}x FIRE`, NATIVE_W / 2, 25, color, 8);
+
+    const pct = oc.timer / oc.maxDuration;
+    const barW = 60;
+    px(NATIVE_W / 2 - barW / 2, 31, barW, 2, '#222');
+    px(NATIVE_W / 2 - barW / 2, 31, barW * pct, 2, color);
+
+    // Crackling border
+    ctx.save();
+    ctx.globalAlpha = pulse;
+    ctx.strokeStyle = '#ff0';
+    ctx.lineWidth = 1 * scale;
+    for (let i = 0; i < 8; i++) {
+      const side = Math.floor(Math.random() * 4);
+      const segLen = 15 + Math.random() * 30;
+      let sx, sy, ex, ey;
+      switch (side) {
+        case 0: sx = Math.random() * NATIVE_W; sy = 0; ex = sx + (Math.random() - 0.5) * segLen; ey = segLen * 0.3; break;
+        case 1: sx = Math.random() * NATIVE_W; sy = NATIVE_H; ex = sx + (Math.random() - 0.5) * segLen; ey = NATIVE_H - segLen * 0.3; break;
+        case 2: sx = 0; sy = Math.random() * NATIVE_H; ex = segLen * 0.3; ey = sy + (Math.random() - 0.5) * segLen; break;
+        case 3: sx = NATIVE_W; sy = Math.random() * NATIVE_H; ex = NATIVE_W - segLen * 0.3; ey = sy + (Math.random() - 0.5) * segLen; break;
+      }
+      ctx.beginPath();
+      ctx.moveTo(sx * scale, sy * scale);
+      ctx.lineTo(ex * scale, ey * scale);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1.0;
+    ctx.restore();
+  } else if (oc.debuff && oc.debuffTimer > 0) {
+    const flash = Math.sin(oc.debuffTimer * 12) > 0;
+    drawText('BURNOUT', NATIVE_W / 2, 25, flash ? '#f44' : '#822', 8);
+
+    const pct = oc.debuffTimer / oc.debuffMaxDuration;
+    const barW = 60;
+    px(NATIVE_W / 2 - barW / 2, 31, barW, 2, '#222');
+    px(NATIVE_W / 2 - barW / 2, 31, barW * pct, 2, '#f44');
+  }
+}
+
+function drawModifierAnnouncement() {
+  const ann = game.modifiers.announcement;
+  if (!ann || ann.timer <= 0) return;
+
+  const alpha = Math.min(1, ann.timer * 2);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  drawText(ann.text, NATIVE_W / 2, NATIVE_H / 2 + 60, '#fff', 10);
+  ctx.globalAlpha = 1.0;
+  ctx.restore();
+}
+
+// ============================================================
+// DRAWING — MAIN
+// ============================================================
+
+function draw(dt) {
+  px(0, 0, NATIVE_W, NATIVE_H, '#080810');
   drawStarfield(dt);
 
-  // Center line
   for (let y = 0; y < NATIVE_H; y += 8) {
     px(NATIVE_W / 2, y, 1, 4, '#1a1a2e');
   }
@@ -595,49 +948,46 @@ function draw(dt) {
   const p2 = game.p2;
   const shield = game.shield;
 
-  // Draw ships
+  // Black hole renders behind everything
+  drawBlackHole();
+
+  // Ships
   if (p1) drawShip(p1.x, p1.y, p1.w, p1.h, true, game.scores[0], game.flashTimers[0] > 0);
   if (p2) drawShip(p2.x, p2.y, p2.w, p2.h, false, game.scores[1], game.flashTimers[1] > 0);
 
-  // Draw shield orb
+  // Shield orb
   if (shield) {
     const cx = (shield.x + shield.r) * scale;
     const cy = (shield.y + shield.r) * scale;
     const r = shield.r * scale;
     const t = shield.colorTime || 0;
 
-    // Color cycle — shifts hue over time
-    const hue = shield.locked ? 60 : (t * 40) % 360; // locked = yellow, otherwise cycle
+    const hue = shield.locked ? 60 : (t * 40) % 360;
     const sat = shield.locked ? 90 : 70;
     const light = shield.locked ? 55 : 45;
     const alpha = shield.locked ? 0.5 : 0.35;
 
-    // Outer glow
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, r + 6 * scale, 0, Math.PI * 2);
     ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha * 0.3})`;
     ctx.fill();
 
-    // Mid glow
     ctx.beginPath();
     ctx.arc(cx, cy, r + 2 * scale, 0, Math.PI * 2);
     ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha * 0.5})`;
     ctx.fill();
 
-    // Main orb
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fillStyle = `hsla(${hue}, ${sat}%, ${light}%, ${alpha})`;
     ctx.fill();
 
-    // Inner highlight
     ctx.beginPath();
     ctx.arc(cx - r * 0.25, cy - r * 0.25, r * 0.4, 0, Math.PI * 2);
     ctx.fillStyle = `hsla(${hue}, 30%, 80%, ${alpha * 0.6})`;
     ctx.fill();
 
-    // Edge ring
     ctx.beginPath();
     ctx.arc(cx, cy, r - 1 * scale, 0, Math.PI * 2);
     ctx.strokeStyle = `hsla(${(hue + 30) % 360}, ${sat}%, ${light + 20}%, ${alpha * 0.8})`;
@@ -645,25 +995,32 @@ function draw(dt) {
     ctx.stroke();
     ctx.restore();
 
-    // Lock indicator
     if (shield.locked) {
-      const lockText = Math.ceil(shield.lockTimer).toString();
-      drawText(lockText, shield.x + shield.r, shield.y - 6, '#ff0', 8);
+      drawText(Math.ceil(shield.lockTimer).toString(), shield.x + shield.r, shield.y - 6, '#ff0', 8);
     }
   }
 
-  // Draw bullets
+  // Bullets — velocity-based trails for curved shots
   for (const b of game.bullets) {
     const color = b.owner === 0 ? '#0af' : '#f44';
     px(b.x, b.y, b.w, b.h, color);
-    // Trail
-    const trailX = b.owner === 0 ? b.x - 4 : b.x + b.w;
-    px(trailX, b.y + 1, 3, 1, b.owner === 0 ? 'rgba(0,170,255,0.4)' : 'rgba(255,68,68,0.4)');
+    const speed = Math.sqrt(b.vx * b.vx + b.vy * b.vy);
+    if (speed > 0) {
+      const trailDx = -(b.vx / speed) * 4;
+      const trailDy = -(b.vy / speed) * 4;
+      px(b.x + b.w / 2 + trailDx - 1, b.y + b.h / 2 + trailDy - 0.5, 3, 1,
+        b.owner === 0 ? 'rgba(0,170,255,0.4)' : 'rgba(255,68,68,0.4)');
+    }
   }
 
   // HUD
   drawText(`P1: ${game.scores[0]}`, 60, 12, '#0af', 10);
   drawText(`P2: ${game.scores[1]}`, NATIVE_W - 60, 12, '#f44', 10);
+
+  // Modifier HUD
+  drawGravityWellIndicator();
+  drawOverclockIndicator();
+  drawModifierAnnouncement();
 
   // Countdown
   if (game.state === 'countdown') {
@@ -698,10 +1055,8 @@ function hideAllMenus() {
 }
 
 function showRoundScreen(scorer) {
-  document.getElementById('round-text').textContent =
-    `PLAYER ${scorer + 1} SCORES!`;
-  document.getElementById('round-score').textContent =
-    `P1: ${game.scores[0]}  —  P2: ${game.scores[1]}`;
+  document.getElementById('round-text').textContent = `PLAYER ${scorer + 1} SCORES!`;
+  document.getElementById('round-score').textContent = `P1: ${game.scores[0]}  —  P2: ${game.scores[1]}`;
   menuRound.classList.add('visible');
   overlay.classList.add('active');
   setTimeout(() => {
@@ -715,10 +1070,8 @@ function showWinScreen(winner) {
     'Tin Can', 'Scout', 'Interceptor', 'Viper', 'Phantom',
     'Wraith', 'Nova', 'Supernova', 'Celestial', 'LEGENDARY'
   ];
-  document.getElementById('win-text').textContent =
-    `PLAYER ${winner + 1} WINS!`;
-  document.getElementById('win-ship').textContent =
-    `Final Form: ${tierNames[Math.min(game.scores[winner], 9)]}`;
+  document.getElementById('win-text').textContent = `PLAYER ${winner + 1} WINS!`;
+  document.getElementById('win-ship').textContent = `Final Form: ${tierNames[Math.min(game.scores[winner], 9)]}`;
   menuWin.classList.add('visible');
   overlay.classList.add('active');
 }
@@ -726,12 +1079,10 @@ function showWinScreen(winner) {
 // --- Game loop ---
 let lastTime = 0;
 function loop(time) {
-  const dt = Math.min((time - lastTime) / 1000, 0.05); // cap dt
+  const dt = Math.min((time - lastTime) / 1000, 0.05);
   lastTime = time;
-
   update(dt);
   draw(dt);
-
   requestAnimationFrame(loop);
 }
 requestAnimationFrame((t) => { lastTime = t; requestAnimationFrame(loop); });
@@ -739,24 +1090,9 @@ requestAnimationFrame((t) => { lastTime = t; requestAnimationFrame(loop); });
 // ===========================================================
 // MULTIPLAYER INTEGRATION HOOKS
 // ===========================================================
-// The following functions define the interface for plugging
-// this game into a WebSocket-based lobby system.
-//
-// To integrate:
-// 1. Import/require this module or embed it
-// 2. Replace local input handling with networked input
-// 3. Use the exported functions below to sync state
-//
-// --- Outbound events (send to server) ---
-// onLocalInput(inputState) — called every frame with local player input
-// onFireEvent(playerId) — called when local player fires
-//
-// --- Inbound events (receive from server) ---
-// applyRemoteInput(playerId, inputState) — apply opponent's input
-// syncGameState(stateObj) — full state sync from authoritative server
-// startMatch() — server signals match start
-//
-// The `game` object is globally accessible for serialization.
+// game object is globally accessible for serialization.
+// Modifier state is included in game.modifiers for sync.
+// See MULTIPLAYER.md for integration spec.
 // ===========================================================
 
 </script>
