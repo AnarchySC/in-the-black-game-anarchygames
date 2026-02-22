@@ -66,6 +66,11 @@
     color: #000;
     box-shadow: 0 0 15px #0f0;
   }
+  #btn-exit:hover {
+    background: #f44;
+    color: #000;
+    box-shadow: 0 0 15px #f44;
+  }
 </style>
 </head>
 <body>
@@ -75,7 +80,8 @@
     <h1>IN THE BLACK</h1>
     <h2>// ORBITAL COMBAT //</h2>
     <p>Two ships. One shield. Shoot your opponent while the shield drifts between you.
-    Don't let it pass you — or your enemy gets 2 seconds of cover.</p>
+    Don't let it pass you — or your enemy gets 2 seconds of cover.
+    Best of 10 rounds. First to 6 wins.</p>
     <p style="color:#666; font-size:11px;">
       P1: W/S or Mouse Wheel to move &bull; Click or Space to fire<br>
       P2: Up/Down arrows to move &bull; Enter to fire
@@ -90,7 +96,11 @@
   <div id="menu-win" class="menu">
     <h1 id="win-text"></h1>
     <h2 id="win-ship"></h2>
-    <button id="btn-restart">PLAY AGAIN</button>
+    <p id="win-score"></p>
+    <div style="display:flex; gap:16px; margin-top:8px;">
+      <button id="btn-rematch">REMATCH</button>
+      <button id="btn-exit" style="color:#f44; border-color:#f44;">EXIT</button>
+    </div>
   </div>
 </div>
 
@@ -122,11 +132,12 @@ const SHIP_SPEED = 200;
 const FIRE_RATE = 3.5;
 const FIRE_INTERVAL = 1.0 / FIRE_RATE;
 const SHIP_MARGIN = 40;
-const WIN_SCORE = 10;
+const WIN_SCORE = 6; // best of 10 — first to 6 wins
+const MAX_ROUNDS = 10;
 
 // --- Modifier Constants ---
-const MOD_SPAWN_MIN = 20;
-const MOD_SPAWN_MAX = 40;
+const MOD_SPAWN_MIN = 8;
+const MOD_SPAWN_MAX = 18;
 const MOD_ANNOUNCE_TIME = 2.0;
 
 // Gravity Well
@@ -326,17 +337,20 @@ function resetRound() {
   game.shield = createShield();
   game.bullets = [];
   game.flashTimers = [0, 0];
+  game.state = 'countdown';
+  game.countdownTimer = 2.0;
+  // NOTE: modifiers persist across rounds — only reset on new match
+}
 
-  // Reset modifiers
+function resetMatch() {
+  game.scores = [0, 0];
   game.modifiers.spawnTimer = randRange(MOD_SPAWN_MIN, MOD_SPAWN_MAX);
   game.modifiers.active = null;
   game.modifiers.announcement = null;
   game.modifiers.gravityWell = null;
   game.modifiers.blackHole = null;
   game.modifiers.overclock = null;
-
-  game.state = 'countdown';
-  game.countdownTimer = 2.0;
+  resetRound();
 }
 
 // --- Input ---
@@ -760,11 +774,22 @@ function handleHit(hitPlayerId) {
   game.scores[scorerId]++;
   game.flashTimers[hitPlayerId] = 0.3;
 
+  const totalRounds = game.scores[0] + game.scores[1];
+
+  // Win condition: first to 6 (majority of 10)
   if (game.scores[scorerId] >= WIN_SCORE) {
     game.state = 'gameOver';
     game.roundWinner = scorerId;
     showWinScreen(scorerId);
-  } else {
+  }
+  // All 10 rounds played — whoever has more wins
+  else if (totalRounds >= MAX_ROUNDS) {
+    const winner = game.scores[0] > game.scores[1] ? 0 : 1;
+    game.state = 'gameOver';
+    game.roundWinner = winner;
+    showWinScreen(winner);
+  }
+  else {
     game.state = 'roundEnd';
     game.roundWinner = scorerId;
     showRoundScreen(scorerId);
@@ -1036,15 +1061,20 @@ const menuRound = document.getElementById('menu-round');
 const menuWin = document.getElementById('menu-win');
 
 document.getElementById('btn-start').addEventListener('click', () => {
-  game.scores = [0, 0];
   hideAllMenus();
-  resetRound();
+  resetMatch();
 });
 
-document.getElementById('btn-restart').addEventListener('click', () => {
-  game.scores = [0, 0];
+document.getElementById('btn-rematch').addEventListener('click', () => {
   hideAllMenus();
-  resetRound();
+  resetMatch();
+});
+
+document.getElementById('btn-exit').addEventListener('click', () => {
+  hideAllMenus();
+  game.state = 'menu';
+  menuTitle.classList.add('visible');
+  overlay.classList.add('active');
 });
 
 function hideAllMenus() {
@@ -1055,8 +1085,9 @@ function hideAllMenus() {
 }
 
 function showRoundScreen(scorer) {
+  const totalRounds = game.scores[0] + game.scores[1];
   document.getElementById('round-text').textContent = `PLAYER ${scorer + 1} SCORES!`;
-  document.getElementById('round-score').textContent = `P1: ${game.scores[0]}  —  P2: ${game.scores[1]}`;
+  document.getElementById('round-score').textContent = `P1: ${game.scores[0]}  —  P2: ${game.scores[1]}  (Round ${totalRounds}/${MAX_ROUNDS})`;
   menuRound.classList.add('visible');
   overlay.classList.add('active');
   setTimeout(() => {
@@ -1072,6 +1103,7 @@ function showWinScreen(winner) {
   ];
   document.getElementById('win-text').textContent = `PLAYER ${winner + 1} WINS!`;
   document.getElementById('win-ship').textContent = `Final Form: ${tierNames[Math.min(game.scores[winner], 9)]}`;
+  document.getElementById('win-score').textContent = `Final Score: P1 ${game.scores[0]} — P2 ${game.scores[1]}`;
   menuWin.classList.add('visible');
   overlay.classList.add('active');
 }
