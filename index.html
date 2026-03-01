@@ -21,11 +21,41 @@
     height: 100vh;
     overflow: hidden;
     font-family: 'Codex', monospace;
+    touch-action: none;
   }
   canvas {
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     border: 2px solid #333;
+    touch-action: none;
+  }
+  #touch-fire-btn {
+    display: none;
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    background: rgba(255, 60, 60, 0.25);
+    border: 3px solid rgba(255, 60, 60, 0.6);
+    color: #f66;
+    font-family: 'Codex', monospace;
+    font-size: 14px;
+    letter-spacing: 2px;
+    justify-content: center;
+    align-items: center;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+    z-index: 15;
+    cursor: pointer;
+  }
+  #touch-fire-btn.visible { display: flex; }
+  #touch-fire-btn.active {
+    background: rgba(255, 60, 60, 0.5);
+    box-shadow: 0 0 20px rgba(255, 60, 60, 0.6);
+    border-color: #f66;
   }
   #ui-overlay {
     position: absolute;
@@ -147,11 +177,82 @@
   #disconnect-overlay.visible { display: flex; }
   #disconnect-overlay h2 { color: #f44; font-size: 20px; text-shadow: 0 0 10px #f44; }
   #disconnect-overlay p { color: #888; font-size: 12px; }
+  #settings-btn {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    width: 36px;
+    height: 36px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    color: #aaa;
+    font-size: 20px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    cursor: pointer;
+    z-index: 12;
+    user-select: none;
+    transition: background 0.15s;
+  }
+  #settings-btn:hover { background: rgba(255,255,255,0.15); color: #fff; }
+  #settings-panel {
+    display: none;
+    position: fixed;
+    top: 52px;
+    right: 10px;
+    background: rgba(10,10,20,0.92);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 8px;
+    padding: 14px 16px;
+    z-index: 12;
+    font-family: 'Codex', monospace;
+    min-width: 180px;
+  }
+  #settings-panel.visible { display: block; }
+  #settings-panel label {
+    display: block;
+    color: #888;
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  #settings-panel label:not(:first-child) { margin-top: 10px; }
+  #settings-panel input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    background: rgba(255,255,255,0.15);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  #settings-panel input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    background: #0ff;
+    border-radius: 50%;
+    cursor: pointer;
+  }
+  #settings-panel input[type="range"]::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    background: #0ff;
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
 <script src="assets/peerjs.min.js"></script>
 <canvas id="game"></canvas>
+<div id="touch-fire-btn">FIRE</div>
 <div id="ui-overlay" class="active">
   <div id="menu-title" class="menu visible">
     <h1>IN THE BLACK</h1>
@@ -162,6 +263,9 @@
     <p id="controls-hint" style="color:#666; font-size:11px;">
       P1: W/S or Mouse Wheel to move &bull; Click or Space to fire<br>
       P2: Up/Down arrows to move &bull; Enter to fire
+    </p>
+    <p id="controls-hint-touch" style="color:#666; font-size:11px; display:none;">
+      Touch: Drag on screen to move &bull; FIRE button to shoot
     </p>
     <div class="btn-row">
       <button id="btn-local">LOCAL PLAY</button>
@@ -208,6 +312,13 @@
   <h2>CONNECTION LOST</h2>
   <p id="disconnect-reason">Opponent disconnected.</p>
   <button id="btn-disconnect-exit" style="font-family:'Codex',monospace; font-size:14px; padding:8px 24px; background:transparent; color:#f44; border:2px solid #f44; cursor:pointer; text-transform:uppercase; letter-spacing:2px;">EXIT TO MENU</button>
+</div>
+<div id="settings-btn">&#9881;</div>
+<div id="settings-panel">
+  <label>MUSIC</label>
+  <input type="range" id="vol-music" min="0" max="1" step="0.01" value="0.35">
+  <label>SFX</label>
+  <input type="range" id="vol-sfx" min="0" max="1" step="0.01" value="0.5">
 </div>
 
 <script>
@@ -319,10 +430,23 @@ const MUSIC_TRACKS = [
   'assets/music/zero-gravity-save-point-2.mp3',
 ];
 
+// --- Volume persistence ---
+function loadVolumes() {
+  const m = localStorage.getItem('itb-vol-music');
+  const s = localStorage.getItem('itb-vol-sfx');
+  if (m !== null) document.getElementById('vol-music').value = m;
+  if (s !== null) document.getElementById('vol-sfx').value = s;
+  return {
+    music: m !== null ? parseFloat(m) : 0.35,
+    sfx: s !== null ? parseFloat(s) : 0.5,
+  };
+}
+const savedVol = loadVolumes();
+
 const audio = {
   unlocked: false,
-  musicVolume: 0.35,
-  sfxVolume: 0.5,
+  musicVolume: savedVol.music,
+  sfxVolume: savedVol.sfx,
   music: null,
   musicIndex: -1,
   shuffled: [],
@@ -413,6 +537,20 @@ function startMusic() {
   shufflePlaylist();
   playNextTrack();
 }
+
+// --- Settings panel ---
+document.getElementById('settings-btn').addEventListener('click', () => {
+  document.getElementById('settings-panel').classList.toggle('visible');
+});
+document.getElementById('vol-music').addEventListener('input', (e) => {
+  audio.musicVolume = parseFloat(e.target.value);
+  if (audio.music) audio.music.volume = audio.musicVolume;
+  localStorage.setItem('itb-vol-music', e.target.value);
+});
+document.getElementById('vol-sfx').addEventListener('input', (e) => {
+  audio.sfxVolume = parseFloat(e.target.value);
+  localStorage.setItem('itb-vol-sfx', e.target.value);
+});
 
 function stopMusic() {
   if (!audio.music) return;
@@ -958,7 +1096,7 @@ const net = {
   conn: null,
   roomCode: '',
   connected: false,
-  remoteInput: { up: false, down: false, fire: false, fireOnce: false, mouseWheelDelta: 0 },
+  remoteInput: { up: false, down: false, fire: false, fireOnce: false, mouseWheelDelta: 0, touchTargetY: null },
   stateBuffer: [],     // ring buffer of 3 recent state snapshots for interpolation
   tickRate: 22,        // ms between state broadcasts (~45Hz)
   inputRate: 16,       // ms between input sends (~60Hz)
@@ -1044,6 +1182,8 @@ const input = {
   p1Up: false, p1Down: false, p1Fire: false, p1FireOnce: false,
   p2Up: false, p2Down: false, p2Fire: false, p2FireOnce: false,
   mouseWheelDelta: 0,
+  touchTargetY: null,
+  touchActive: false,
 };
 
 document.addEventListener('keydown', (e) => {
@@ -1080,6 +1220,94 @@ canvas.addEventListener('mouseup', (e) => {
   if (e.button === 0) { input.p1Fire = false; }
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// --- Touch input ---
+const touchFireBtn = document.getElementById('touch-fire-btn');
+let moveTouchId = null;
+let fireTouchId = null;
+const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+if (isTouchDevice) {
+  touchFireBtn.classList.add('visible');
+  const touchHint = document.getElementById('controls-hint-touch');
+  if (touchHint) touchHint.style.display = 'block';
+}
+
+function touchYToNative(clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return ((clientY - rect.top) / rect.height) * NATIVE_H;
+}
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  for (const touch of e.changedTouches) {
+    if (moveTouchId === null) {
+      moveTouchId = touch.identifier;
+      input.touchTargetY = touchYToNative(touch.clientY);
+      input.touchActive = true;
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === moveTouchId) {
+      input.touchTargetY = touchYToNative(touch.clientY);
+    }
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === moveTouchId) {
+      moveTouchId = null;
+      input.touchTargetY = null;
+      input.touchActive = false;
+    }
+  }
+});
+
+canvas.addEventListener('touchcancel', (e) => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === moveTouchId) {
+      moveTouchId = null;
+      input.touchTargetY = null;
+      input.touchActive = false;
+    }
+  }
+});
+
+touchFireBtn.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  for (const touch of e.changedTouches) {
+    if (fireTouchId === null) {
+      fireTouchId = touch.identifier;
+      input.p1Fire = true;
+      input.p1FireOnce = true;
+      touchFireBtn.classList.add('active');
+    }
+  }
+}, { passive: false });
+
+touchFireBtn.addEventListener('touchend', (e) => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === fireTouchId) {
+      fireTouchId = null;
+      input.p1Fire = false;
+      touchFireBtn.classList.remove('active');
+    }
+  }
+});
+
+touchFireBtn.addEventListener('touchcancel', (e) => {
+  for (const touch of e.changedTouches) {
+    if (touch.identifier === fireTouchId) {
+      fireTouchId = null;
+      input.p1Fire = false;
+      touchFireBtn.classList.remove('active');
+    }
+  }
+});
 
 // --- Collision ---
 function aabb(a, b) {
@@ -1347,32 +1575,44 @@ function update(dt) {
 
   // --- Player movement ---
   let p1Move = 0;
-  if (input.p1Up) p1Move -= 1;
-  if (input.p1Down) p1Move += 1;
-  if (Math.abs(input.mouseWheelDelta) > 2) {
-    p1Move += Math.sign(input.mouseWheelDelta) * Math.min(Math.abs(input.mouseWheelDelta) / 30, 1);
-    input.mouseWheelDelta *= 0.7;
+  if (input.touchTargetY !== null) {
+    // Touch: position paddle center directly at touch Y
+    const targetY = input.touchTargetY - p1.h / 2;
+    p1.y = Math.max(0, Math.min(NATIVE_H - p1.h, targetY));
   } else {
-    input.mouseWheelDelta = 0;
+    if (input.p1Up) p1Move -= 1;
+    if (input.p1Down) p1Move += 1;
+    if (Math.abs(input.mouseWheelDelta) > 2) {
+      p1Move += Math.sign(input.mouseWheelDelta) * Math.min(Math.abs(input.mouseWheelDelta) / 30, 1);
+      input.mouseWheelDelta *= 0.7;
+    } else {
+      input.mouseWheelDelta = 0;
+    }
+    p1.y += p1Move * SHIP_SPEED * speedMult * dt;
+    p1.y = Math.max(0, Math.min(NATIVE_H - p1.h, p1.y));
   }
-  p1.y += p1Move * SHIP_SPEED * speedMult * dt;
-  p1.y = Math.max(0, Math.min(NATIVE_H - p1.h, p1.y));
 
   let p2Move = 0;
-  if (input.p2Up) p2Move -= 1;
-  if (input.p2Down) p2Move += 1;
-  // In host mode, also handle remote player's mouse wheel for P2
-  if (net.mode === 'host' && net.remoteInput.mouseWheelDelta) {
-    const mw = net.remoteInput.mouseWheelDelta;
-    if (Math.abs(mw) > 2) {
-      p2Move += Math.sign(mw) * Math.min(Math.abs(mw) / 30, 1);
-      net.remoteInput.mouseWheelDelta *= 0.7;
-    } else {
-      net.remoteInput.mouseWheelDelta = 0;
+  if (net.mode === 'host' && net.remoteInput.touchTargetY !== null) {
+    // Remote touch: position P2 paddle directly
+    const targetY = net.remoteInput.touchTargetY - p2.h / 2;
+    p2.y = Math.max(0, Math.min(NATIVE_H - p2.h, targetY));
+  } else {
+    if (input.p2Up) p2Move -= 1;
+    if (input.p2Down) p2Move += 1;
+    // In host mode, also handle remote player's mouse wheel for P2
+    if (net.mode === 'host' && net.remoteInput.mouseWheelDelta) {
+      const mw = net.remoteInput.mouseWheelDelta;
+      if (Math.abs(mw) > 2) {
+        p2Move += Math.sign(mw) * Math.min(Math.abs(mw) / 30, 1);
+        net.remoteInput.mouseWheelDelta *= 0.7;
+      } else {
+        net.remoteInput.mouseWheelDelta = 0;
+      }
     }
+    p2.y += p2Move * SHIP_SPEED * speedMult * dt;
+    p2.y = Math.max(0, Math.min(NATIVE_H - p2.h, p2.y));
   }
-  p2.y += p2Move * SHIP_SPEED * speedMult * dt;
-  p2.y = Math.max(0, Math.min(NATIVE_H - p2.h, p2.y));
 
   // --- Firing ---
   p1.fireCooldown -= dt;
@@ -1600,6 +1840,8 @@ function updateBulletTrails(dt) {
       });
     }
   }
+  // Cap to prevent unbounded growth under lag
+  if (game.bulletTrails.length > 500) game.bulletTrails.splice(0, game.bulletTrails.length - 500);
   // Update and cull
   for (let i = game.bulletTrails.length - 1; i >= 0; i--) {
     const p = game.bulletTrails[i];
@@ -1683,7 +1925,6 @@ function drawGravityWellIndicator() {
   if (!gw || gw.timer <= 0) return;
 
   const color = gw.isSlow ? '#f80' : '#0f0';
-  const colorDim = gw.isSlow ? '#a50' : '#080';
   const label = gw.isSlow ? 'GRAVITY WELL — DRAG' : 'GRAVITY WELL — SURGE';
   const pct = gw.timer / gw.maxDuration;
   const t = gw.maxDuration - gw.timer; // elapsed time
@@ -2207,7 +2448,7 @@ function netCleanup() {
   net.roomCode = '';
   net.stateBuffer = [];
   net.latency = 0;
-  net.remoteInput = { up: false, down: false, fire: false, fireOnce: false, mouseWheelDelta: 0 };
+  net.remoteInput = { up: false, down: false, fire: false, fireOnce: false, mouseWheelDelta: 0, touchTargetY: null };
 }
 
 function setupConnection(conn) {
@@ -2232,6 +2473,8 @@ function setupConnection(conn) {
 }
 
 function handleNetMessage(data) {
+  if (!data || typeof data !== 'object' || typeof data.t !== 'string') return;
+
   switch (data.t) {
     case 'start':
       // Client receives start signal from host (may arrive multiple times)
@@ -2245,32 +2488,35 @@ function handleNetMessage(data) {
 
     case 'state':
       // Client receives game state from host
-      if (net.mode === 'client') {
+      if (net.mode === 'client' && data.gs && typeof data.gs === 'string' && Array.isArray(data.sc)) {
         applyStateSnapshot(data);
       }
       break;
 
     case 'input':
-      // Host receives input from client
+      // Host receives input from client — coerce to booleans/numbers
       if (net.mode === 'host') {
-        net.remoteInput.up = data.u;
-        net.remoteInput.down = data.d;
-        net.remoteInput.fire = data.f;
+        net.remoteInput.up = !!data.u;
+        net.remoteInput.down = !!data.d;
+        net.remoteInput.fire = !!data.f;
         if (data.fo) net.remoteInput.fireOnce = true;
-        net.remoteInput.mouseWheelDelta = data.mw || 0;
+        net.remoteInput.mouseWheelDelta = typeof data.mw === 'number' ? Math.max(-500, Math.min(500, data.mw)) : 0;
+        net.remoteInput.touchTargetY = (typeof data.ty === 'number' && data.ty >= 0 && data.ty <= NATIVE_H) ? data.ty : null;
       }
       break;
 
     case 'ping':
       // Respond to ping with pong
-      if (net.conn && net.conn.open) {
+      if (net.conn && net.conn.open && typeof data.ts === 'number') {
         net.conn.send({ t: 'pong', ts: data.ts });
       }
       break;
 
     case 'pong':
       // Calculate latency from pong response
-      net.latency = Math.round((performance.now() - data.ts) / 2);
+      if (typeof data.ts === 'number') {
+        net.latency = Math.round((performance.now() - data.ts) / 2);
+      }
       break;
   }
 }
@@ -2574,6 +2820,7 @@ function sendClientInput() {
     f: input.p1Fire,
     fo: input.p1FireOnce,
     mw: input.mouseWheelDelta,
+    ty: input.touchTargetY,
   });
 
   // Consume fireOnce after sending
@@ -2631,23 +2878,30 @@ function loop(time) {
 
     // Client-side prediction: locally move own ship (P2) based on own input
     if (game.p2 && game.state === 'playing') {
-      let p2Move = 0;
-      if (input.p1Up) p2Move -= 1; // client uses P1 controls for their ship
-      if (input.p1Down) p2Move += 1;
-      if (Math.abs(input.mouseWheelDelta) > 2) {
-        p2Move += Math.sign(input.mouseWheelDelta) * Math.min(Math.abs(input.mouseWheelDelta) / 30, 1);
-        input.mouseWheelDelta *= 0.7;
+      if (input.touchTargetY !== null) {
+        // Touch: position paddle center directly
+        const targetY = input.touchTargetY - game.p2.h / 2;
+        game.p2.y = Math.max(0, Math.min(NATIVE_H - game.p2.h, targetY));
+        game.p2._targetY = game.p2.y;
       } else {
-        input.mouseWheelDelta = 0;
-      }
-      if (p2Move !== 0) {
-        const speedMult = getEffectiveSpeedMultiplier();
-        game.p2.y += p2Move * SHIP_SPEED * speedMult * dt;
-        game.p2.y = Math.max(0, Math.min(NATIVE_H - game.p2.h, game.p2.y));
-        game.p2._targetY = game.p2.y; // override target so interpolation doesn't fight prediction
-      } else if (game.p2._targetY !== undefined) {
-        // Only correct toward host when not actively moving
-        game.p2.y = lerp(game.p2.y, game.p2._targetY, 0.15);
+        let p2Move = 0;
+        if (input.p1Up) p2Move -= 1; // client uses P1 controls for their ship
+        if (input.p1Down) p2Move += 1;
+        if (Math.abs(input.mouseWheelDelta) > 2) {
+          p2Move += Math.sign(input.mouseWheelDelta) * Math.min(Math.abs(input.mouseWheelDelta) / 30, 1);
+          input.mouseWheelDelta *= 0.7;
+        } else {
+          input.mouseWheelDelta = 0;
+        }
+        if (p2Move !== 0) {
+          const speedMult = getEffectiveSpeedMultiplier();
+          game.p2.y += p2Move * SHIP_SPEED * speedMult * dt;
+          game.p2.y = Math.max(0, Math.min(NATIVE_H - game.p2.h, game.p2.y));
+          game.p2._targetY = game.p2.y; // override target so interpolation doesn't fight prediction
+        } else if (game.p2._targetY !== undefined) {
+          // Only correct toward host when not actively moving
+          game.p2.y = lerp(game.p2.y, game.p2._targetY, 0.15);
+        }
       }
     }
 
@@ -2675,15 +2929,15 @@ function loop(time) {
   // --- Thruster audio ---
   if (game.state === 'playing') {
     if (net.mode === 'local') {
-      audio.thrusterP1Playing = input.p1Up || input.p1Down || Math.abs(input.mouseWheelDelta) > 2;
+      audio.thrusterP1Playing = input.p1Up || input.p1Down || Math.abs(input.mouseWheelDelta) > 2 || input.touchActive;
       audio.thrusterP2Playing = input.p2Up || input.p2Down;
     } else if (net.mode === 'host') {
-      audio.thrusterP1Playing = input.p1Up || input.p1Down || Math.abs(input.mouseWheelDelta) > 2;
-      audio.thrusterP2Playing = net.remoteInput.up || net.remoteInput.down || Math.abs(net.remoteInput.mouseWheelDelta) > 2;
+      audio.thrusterP1Playing = input.p1Up || input.p1Down || Math.abs(input.mouseWheelDelta) > 2 || input.touchActive;
+      audio.thrusterP2Playing = net.remoteInput.up || net.remoteInput.down || Math.abs(net.remoteInput.mouseWheelDelta) > 2 || net.remoteInput.touchTargetY !== null;
     } else if (net.mode === 'client') {
       // Client only hears own thruster (P2 ship, using P1 controls)
       audio.thrusterP1Playing = false;
-      audio.thrusterP2Playing = input.p1Up || input.p1Down || Math.abs(input.mouseWheelDelta) > 2;
+      audio.thrusterP2Playing = input.p1Up || input.p1Down || Math.abs(input.mouseWheelDelta) > 2 || input.touchActive;
     }
   } else {
     audio.thrusterP1Playing = false;
@@ -2698,6 +2952,8 @@ requestAnimationFrame((t) => { lastTime = t; requestAnimationFrame(loop); });
 
 // --- Tab close cleanup ---
 window.addEventListener('beforeunload', () => {
+  stopMusic();
+  stopThrusters();
   if (net.peer) { try { net.peer.destroy(); } catch(e) {} }
 });
 
