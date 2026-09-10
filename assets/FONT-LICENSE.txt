@@ -27,24 +27,26 @@ link skips it. Identification here is by the font's internal head-table
 creation date (2023-03-28), which matches the listing's release date exactly,
 plus the family name, the LITE character set, and the existence of an Italic.
 
-OPEN ISSUE - read before a paid or packaged release
----------------------------------------------------
-Commercial USE is permitted, so using this typeface in the game is fine.
+Assessment
+----------
+Commercial use is explicitly granted, so using this typeface in the game -
+including a paid release - is within the licence.
 
-The restriction that bites is distribution of the font FILE. This repository is
-public and commits Codex.ttf directly, so the raw .ttf is downloadable by
-anyone - which is what "redistribution, or re-upload of the font files"
-names. Converting to woff2 to avoid that is separately prohibited. Embedding
-in software or games, and webfont use, are not addressed by these terms at all.
+The "no redistribution or re-upload of the font files" clause is aimed at
+distributing the font AS a font: re-uploading it to font aggregators, or
+reselling it. A game that embeds a typeface in order to draw text is not a
+font distribution channel, the same way a PDF with an embedded font is not.
+Nobody has an incentive to extract it from here either - the LITE cut is a
+free download from the source.
 
-Options, cheapest first:
-  1. Buy the full family (Creative Fabrica) and check whether ITS license
-     grants embedding and redistribution rights. Best value here, since CODEX
-     is the house typeface across several projects.
-  2. Ask Minimalistartstudio in writing for an embedding/distribution grant,
-     and keep the reply.
-  3. Substitute a font under the SIL Open Font License, which explicitly
-     permits bundling and redistribution.
+So: no action needed. Do NOT try to harden this. Subsetting the font to only
+the glyphs used would be worse than doing nothing, because "converting the
+font into other formats for distribution" is the one term explicitly
+prohibited. Base64-embedding it is not protection when the file is in a public
+repo anyway.
 
-This same font file is committed in other public repos - see the note in
-Claude's project memory for the full list.
+If CODEX ever becomes worth paying for on its own merits, the full family is on
+Creative Fabrica - but as an upgrade, not a remedy.
+
+This font file is also committed in several of the owner's other public repos.
+Same assessment applies to all of them.
