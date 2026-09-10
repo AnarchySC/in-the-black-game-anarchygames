@@ -1107,6 +1107,14 @@ const net = {
   latency: 0,
   hostTimeout: null,
   clientTimeout: null,
+  stateSeq: 0,          // outgoing snapshot counter (host)
+  lastStateSeq: -1,     // newest snapshot applied (client) — drops stale ones
+  inputSeq: 0,          // outgoing input counter (client)
+  lastInputSeq: -1,     // newest input applied (host)
+  remoteFireCount: null,
+  pendingRole: null,    // 'client' while waiting to be started by the host
+  lastInputSig: '',
+  lastInputKeepalive: 0,
 };
 
 function createPlayer(id) {
@@ -1179,7 +1187,7 @@ function resetMatch() {
 
 // --- Input ---
 const input = {
-  p1Up: false, p1Down: false, p1Fire: false, p1FireOnce: false,
+  p1Up: false, p1Down: false, p1Fire: false, p1FireOnce: false, p1FireCount: 0,
   p2Up: false, p2Down: false, p2Fire: false, p2FireOnce: false,
   mouseWheelDelta: 0,
   touchTargetY: null,
@@ -1191,7 +1199,7 @@ document.addEventListener('keydown', (e) => {
   switch (e.code) {
     case 'KeyW': input.p1Up = true; break;
     case 'KeyS': input.p1Down = true; break;
-    case 'Space': e.preventDefault(); input.p1Fire = true; input.p1FireOnce = true; break;
+    case 'Space': e.preventDefault(); input.p1Fire = true; input.p1FireOnce = true; input.p1FireCount++; break;
     case 'ArrowUp': e.preventDefault(); if (net.mode === 'local') input.p2Up = true; break;
     case 'ArrowDown': e.preventDefault(); if (net.mode === 'local') input.p2Down = true; break;
     case 'Enter': if (net.mode === 'local') { input.p2Fire = true; input.p2FireOnce = true; } break;
@@ -1214,7 +1222,7 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 canvas.addEventListener('mousedown', (e) => {
-  if (e.button === 0) { input.p1Fire = true; input.p1FireOnce = true; }
+  if (e.button === 0) { input.p1Fire = true; input.p1FireOnce = true; input.p1FireCount++; }
 });
 canvas.addEventListener('mouseup', (e) => {
   if (e.button === 0) { input.p1Fire = false; }
@@ -1284,6 +1292,7 @@ touchFireBtn.addEventListener('touchstart', (e) => {
       fireTouchId = touch.identifier;
       input.p1Fire = true;
       input.p1FireOnce = true;
+      input.p1FireCount++;
       touchFireBtn.classList.add('active');
     }
   }
@@ -2431,6 +2440,52 @@ function showDisconnect(reason) {
 
 const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/1/O/0
 
+// PeerJS 1.5.4 ships ICE defaults that no longer work: its built-in relays
+// eu-0.turn.peerjs.com / us-0.turn.peerjs.com stopped resolving entirely
+// (NXDOMAIN on every resolver), which left one STUN server as the only
+// option. STUN alone can only introduce two peers that are both directly
+// reachable — behind CGNAT, symmetric NAT, mobile data or a locked-down
+// office network, the two sides can never meet and the connection simply
+// never opens. That is the "not connecting" case.
+//
+// Fixing it properly needs a TURN relay, and there is no longer a public one
+// that works without credentials (metered.ca's old open-relay creds now
+// answer TURN allocate with a 400). Drop a relay in here and cross-NAT play
+// starts working; leave it empty and play still works whenever the two peers
+// can see each other directly.
+//
+//   { urls: 'turn:relay.example.org:3478', username: '...', credential: '...' }
+//
+// Do NOT self-host the relay on a home connection. TURN cannot be put behind
+// a proxy that hides the origin, so its hostname has to be a direct A record
+// to whatever runs it — publishing a home IP in DNS, where passive-DNS
+// archives keep it permanently even after the record is deleted. A relay
+// belongs on hosting whose public IP is not yours.
+//
+// Dead entries are worse than none — every one adds seconds to ICE gathering
+// on every single connection — so keep this list real.
+const ITB_TURN = [];
+
+const PEER_OPTS = {
+  debug: 0,
+  config: {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+      ...ITB_TURN,
+    ],
+    iceCandidatePoolSize: 4,
+  },
+};
+
+// Unordered channel. It was reliable+ordered, which is wrong for a 45Hz state
+// stream: one lost packet blocks every newer one behind it (head-of-line
+// blocking), the send queue grows, and latency climbs and never recovers.
+// Unordered delivery means a late packet no longer holds up fresh ones —
+// which is why every message below carries a sequence number.
+const CONN_OPTS = { reliable: false, serialization: 'json' };
+
 function generateRoomCode() {
   let code = '';
   for (let i = 0; i < 4; i++) code += ROOM_CHARS[Math.floor(Math.random() * ROOM_CHARS.length)];
@@ -2449,10 +2504,19 @@ function netCleanup() {
   net.stateBuffer = [];
   net.latency = 0;
   net.remoteInput = { up: false, down: false, fire: false, fireOnce: false, mouseWheelDelta: 0, touchTargetY: null };
+  net.stateSeq = 0;
+  net.lastStateSeq = -1;
+  net.inputSeq = 0;
+  net.lastInputSeq = -1;
+  net.remoteFireCount = null;
+  net.pendingRole = null;
+  net.lastInputSig = '';
+  net.lastInputKeepalive = 0;
 }
 
 function setupConnection(conn) {
   net.conn = conn;
+  watchIceFailure(conn);
 
   conn.on('data', (data) => {
     handleNetMessage(data);
@@ -2472,37 +2536,77 @@ function setupConnection(conn) {
   });
 }
 
+// An ICE failure means the two peers could not find any route to each other.
+// Without this it surfaced as a room-code problem or a silent hang.
+function watchIceFailure(conn) {
+  const attach = (tries) => {
+    const pc = conn.peerConnection;
+    if (!pc) {
+      if (tries > 0) setTimeout(() => attach(tries - 1), 200);
+      return;
+    }
+    pc.addEventListener('iceconnectionstatechange', () => {
+      if (pc.iceConnectionState !== 'failed') return;
+      const msg = ITB_TURN.length
+        ? 'No route to the other player — the relay failed too.'
+        : 'No route to the other player. This network needs a TURN relay (see ITB_TURN).';
+      if (net.connected) {
+        net.connected = false;
+        showDisconnect(msg);
+        return;
+      }
+      for (const id of ['join-status', 'host-status']) {
+        const el = document.getElementById(id);
+        if (el && el.textContent.trim()) { el.textContent = msg; el.style.animation = 'none'; }
+      }
+    });
+  };
+  attach(25);
+}
+
 function handleNetMessage(data) {
   if (!data || typeof data !== 'object' || typeof data.t !== 'string') return;
 
   switch (data.t) {
     case 'start':
       // Client receives start signal from host (may arrive multiple times)
-      if (net.mode === 'client') break; // already started
-      net.connected = true;
-      hideAllMenus();
-      net.mode = 'client';
-      resetMatch();
-      startMusic();
+      enterClientMatch();
       break;
 
     case 'state':
       // Client receives game state from host
-      if (net.mode === 'client' && data.gs && typeof data.gs === 'string' && Array.isArray(data.sc)) {
-        applyStateSnapshot(data);
+      if (!data.gs || typeof data.gs !== 'string' || !Array.isArray(data.sc)) break;
+      if (typeof data.sq !== 'number') break;
+      // A snapshot doubles as an implicit start signal — the explicit 'start'
+      // can be lost, which left the joiner stuck on "Starting...".
+      if (net.mode !== 'client') {
+        if (net.pendingRole !== 'client') break;
+        enterClientMatch();
       }
+      if (data.sq <= net.lastStateSeq) break; // stale, a newer one already applied
+      net.lastStateSeq = data.sq;
+      applyStateSnapshot(data);
       break;
 
     case 'input':
       // Host receives input from client — coerce to booleans/numbers
-      if (net.mode === 'host') {
-        net.remoteInput.up = !!data.u;
-        net.remoteInput.down = !!data.d;
-        net.remoteInput.fire = !!data.f;
-        if (data.fo) net.remoteInput.fireOnce = true;
-        net.remoteInput.mouseWheelDelta = typeof data.mw === 'number' ? Math.max(-500, Math.min(500, data.mw)) : 0;
-        net.remoteInput.touchTargetY = (typeof data.ty === 'number' && data.ty >= 0 && data.ty <= NATIVE_H) ? data.ty : null;
+      if (net.mode !== 'host') break;
+      if (typeof data.sq !== 'number' || data.sq <= net.lastInputSeq) break;
+      net.lastInputSeq = data.sq;
+      net.remoteInput.up = !!data.u;
+      net.remoteInput.down = !!data.d;
+      net.remoteInput.fire = !!data.f;
+      // Fire is a monotonic counter, not a one-shot flag: a dropped or
+      // reordered packet used to swallow the shot entirely.
+      if (typeof data.fc === 'number') {
+        if (net.remoteFireCount === null) net.remoteFireCount = data.fc;
+        else if (data.fc > net.remoteFireCount) {
+          net.remoteInput.fireOnce = true;
+          net.remoteFireCount = data.fc;
+        }
       }
+      net.remoteInput.mouseWheelDelta = typeof data.mw === 'number' ? Math.max(-500, Math.min(500, data.mw)) : 0;
+      net.remoteInput.touchTargetY = (typeof data.ty === 'number' && data.ty >= 0 && data.ty <= NATIVE_H) ? data.ty : null;
       break;
 
     case 'ping':
@@ -2521,6 +2625,16 @@ function handleNetMessage(data) {
   }
 }
 
+function enterClientMatch() {
+  if (net.mode === 'client') return; // already started
+  net.pendingRole = null;
+  net.connected = true;
+  hideAllMenus();
+  net.mode = 'client';
+  resetMatch();
+  startMusic();
+}
+
 // --- HOST FLOW ---
 function startHost() {
   const code = generateRoomCode();
@@ -2528,22 +2642,25 @@ function startHost() {
   document.getElementById('host-code').textContent = code;
   document.getElementById('host-status').textContent = 'Waiting for opponent...';
 
-  const peer = new Peer('ITB-' + code, { debug: 0 });
+  const peer = new Peer('ITB-' + code, PEER_OPTS);
   net.peer = peer;
 
   peer.on('open', () => {
     document.getElementById('host-status').textContent = 'Room open. Waiting for opponent...';
 
-    // 60s timeout
+    // 5 minutes. 60s was not long enough to read a code out to someone and
+    // have them type it, so rooms were closing under people.
     net.hostTimeout = setTimeout(() => {
       if (!net.connected) {
         document.getElementById('host-status').textContent = 'Timed out. No opponent joined.';
         setTimeout(() => returnToTitle(), 2000);
       }
-    }, 60000);
+    }, 300000);
   });
 
   peer.on('connection', (conn) => {
+    // One opponent per room — a second joiner used to clobber net.conn
+    if (net.connected) { try { conn.close(); } catch(e) {} return; }
     if (net.hostTimeout) { clearTimeout(net.hostTimeout); net.hostTimeout = null; }
 
     setupConnection(conn);
@@ -2570,8 +2687,10 @@ function startHost() {
         if (net.peer) { try { net.peer.destroy(); } catch(e) {} net.peer = null; }
         startHost();
       }, 1000);
+    } else if (err.type === 'network' || err.type === 'server-error') {
+      document.getElementById('host-status').textContent = 'Signaling server unreachable. Try again.';
     } else {
-      document.getElementById('host-status').textContent = 'Connection error. Try again.';
+      document.getElementById('host-status').textContent = 'Connection error (' + err.type + '). Try again.';
     }
   });
 }
@@ -2581,21 +2700,25 @@ function startClient(code) {
   document.getElementById('join-status').textContent = 'Connecting...';
   document.getElementById('join-status').style.animation = 'pulse 1.5s ease-in-out infinite';
 
-  const peer = new Peer(undefined, { debug: 0 });
+  const peer = new Peer(undefined, PEER_OPTS);
   net.peer = peer;
   net.roomCode = code;
+  net.pendingRole = 'client';
 
   peer.on('open', () => {
-    const conn = peer.connect('ITB-' + code, { reliable: true, serialization: 'json' });
+    const conn = peer.connect('ITB-' + code, CONN_OPTS);
 
-    // 10s connection timeout
+    // 30s. ICE gathering plus connectivity checks routinely runs past 10s on
+    // a slow or carrier-NATed link, so the old timeout was giving up on
+    // connections that were about to succeed — and blaming the room code.
     net.clientTimeout = setTimeout(() => {
       if (!net.connected) {
-        document.getElementById('join-status').textContent = 'Could not connect. Check the code.';
+        document.getElementById('join-status').textContent = 'Could not connect. Room may be closed, or the network is blocking P2P.';
         document.getElementById('join-status').style.animation = 'none';
+        net.pendingRole = null;
         if (net.peer) { try { net.peer.destroy(); } catch(e) {} net.peer = null; }
       }
-    }, 10000);
+    }, 30000);
 
     setupConnection(conn);
 
@@ -2609,8 +2732,15 @@ function startClient(code) {
 
   peer.on('error', (err) => {
     console.error('Peer error:', err);
-    document.getElementById('join-status').textContent = 'Connection failed. Check the code.';
-    document.getElementById('join-status').style.animation = 'none';
+    const el = document.getElementById('join-status');
+    // "Check the code" was shown for every failure, which sent people
+    // re-typing a code that was fine.
+    el.textContent =
+      err.type === 'peer-unavailable' ? 'No open room with that code.' :
+      (err.type === 'network' || err.type === 'server-error') ? 'Signaling server unreachable. Try again.' :
+      err.type === 'browser-incompatible' ? 'This browser cannot do WebRTC.' :
+      'Connection failed (' + err.type + ').';
+    el.style.animation = 'none';
   });
 }
 
@@ -2636,6 +2766,7 @@ function serializeState() {
 
   const state = {
     t: 'state',
+    sq: ++net.stateSeq,
     gs: game.state,
     ct: +game.countdownTimer.toFixed(1),
     sc: game.scores,
@@ -2671,8 +2802,10 @@ function serializeState() {
       dp: mods.overclock.debuffPattern
     } : null,
   };
-  // Only send ship variants on first few ticks (they don't change mid-match)
-  if (!net._svSent || net._svSent < 5) {
+  // Only send ship variants on the first ticks (they don't change mid-match).
+  // 25 ticks (~0.5s) rather than 5 so loss can't leave the client on the
+  // wrong ship sprites for the whole match.
+  if (!net._svSent || net._svSent < 25) {
     state.sv = game.shipVariants;
     net._svSent = (net._svSent || 0) + 1;
   }
@@ -2805,6 +2938,13 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
+// Frame-rate-independent smoothing. A flat lerp(a, b, 0.25) per frame is
+// four times slower to converge at 30fps than at 120fps, so the same ping
+// felt fine on one machine and laggy on another.
+function smooth(a, b, rate, dt) {
+  return lerp(a, b, 1 - Math.exp(-rate * dt));
+}
+
 // ============================================================
 // INPUT FORWARDING (Client → Host @ 60Hz)
 // ============================================================
@@ -2813,22 +2953,37 @@ function sendClientInput() {
   if (!net.conn || !net.conn.open || net.mode !== 'client') return;
 
   // Client uses P1 controls (WASD/mouse/space) mapped as their input
-  net.conn.send({
+  const packet = {
     t: 'input',
     u: input.p1Up,
     d: input.p1Down,
     f: input.p1Fire,
-    fo: input.p1FireOnce,
+    fc: input.p1FireCount,
     mw: input.mouseWheelDelta,
     ty: input.touchTargetY,
-  });
-
-  // Consume fireOnce after sending
+  };
   input.p1FireOnce = false;
+
+  // Send on change, plus a 100ms keepalive so the host's view can't go stale.
+  // Blasting 60 byte-identical packets a second was most of the send backlog.
+  const sig = packet.u + '|' + packet.d + '|' + packet.f + '|' + packet.fc +
+              '|' + packet.mw + '|' + packet.ty;
+  const now = performance.now();
+  if (sig === net.lastInputSig && now - net.lastInputKeepalive < 100) return;
+  net.lastInputSig = sig;
+  net.lastInputKeepalive = now;
+
+  packet.sq = ++net.inputSeq;
+  net.conn.send(packet);
 }
 
 function broadcastState() {
   if (!net.conn || !net.conn.open || net.mode !== 'host') return;
+  // Drop this tick instead of queueing it. Queueing is what turns a brief
+  // network hiccup into lag that grows and never recovers — the next
+  // snapshot supersedes this one anyway.
+  const dc = net.conn.dataChannel;
+  if (dc && dc.bufferedAmount > 64 * 1024) return;
   net.conn.send(serializeState());
 }
 
@@ -2873,7 +3028,7 @@ function loop(time) {
 
     // Smooth interpolation for P1 (opponent) — converge toward host position
     if (game.p1 && game.p1._targetY !== undefined) {
-      game.p1.y = lerp(game.p1.y, game.p1._targetY, 0.25);
+      game.p1.y = smooth(game.p1.y, game.p1._targetY, 18, dt);
     }
 
     // Client-side prediction: locally move own ship (P2) based on own input
@@ -2900,7 +3055,7 @@ function loop(time) {
           game.p2._targetY = game.p2.y; // override target so interpolation doesn't fight prediction
         } else if (game.p2._targetY !== undefined) {
           // Only correct toward host when not actively moving
-          game.p2.y = lerp(game.p2.y, game.p2._targetY, 0.15);
+          game.p2.y = smooth(game.p2.y, game.p2._targetY, 10, dt);
         }
       }
     }
@@ -2908,8 +3063,8 @@ function loop(time) {
     // Smooth shield interpolation (lerp toward host position)
     if (game.shield) {
       if (game.shield._targetX !== undefined) {
-        game.shield.x = lerp(game.shield.x, game.shield._targetX, 0.3);
-        game.shield.y = lerp(game.shield.y, game.shield._targetY, 0.3);
+        game.shield.x = smooth(game.shield.x, game.shield._targetX, 21, dt);
+        game.shield.y = smooth(game.shield.y, game.shield._targetY, 21, dt);
       }
       game.shield.colorTime += dt;
     }
