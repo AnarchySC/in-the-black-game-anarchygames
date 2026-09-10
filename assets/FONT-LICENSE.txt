@@ -1,0 +1,50 @@
+CODEX (Regular + Italic)
+========================
+
+Designer / foundry : Minimalistartstudio
+Source             : https://www.fontspace.com/codex-font-f151584
+Released           : 2023-03-28
+Version in repo    : 1.000 (regenerated in FontCreator 14.0.0.2863, 2025-09-27)
+License type       : Freeware (per FontSpace listing)
+Edition            : LITE version - A-Z, lowercase, numbers, punctuation.
+                     A paid full family is sold separately on Creative Fabrica.
+
+License terms, verbatim from the FontSpace listing
+--------------------------------------------------
+  Allowed: Personal and commercial use in your projects - logos, branding,
+  packaging, posters, social media, and digital products.
+
+  Not Allowed: Resale, redistribution, or re-upload of the font files.
+  Converting the font into other formats for distribution is prohibited.
+
+Identification
+--------------
+The shipped Codex.ttf carries no copyright, designer, vendor or license record
+in its name table - it arrived from FontSpace that way, as a loose .ttf rather
+than the zip. Every other font downloaded from FontSpace in this collection
+ships an info.txt naming its license and source URL; taking the direct file
+link skips it. Identification here is by the font's internal head-table
+creation date (2023-03-28), which matches the listing's release date exactly,
+plus the family name, the LITE character set, and the existence of an Italic.
+
+OPEN ISSUE - read before a paid or packaged release
+---------------------------------------------------
+Commercial USE is permitted, so using this typeface in the game is fine.
+
+The restriction that bites is distribution of the font FILE. This repository is
+public and commits Codex.ttf directly, so the raw .ttf is downloadable by
+anyone - which is what "redistribution, or re-upload of the font files"
+names. Converting to woff2 to avoid that is separately prohibited. Embedding
+in software or games, and webfont use, are not addressed by these terms at all.
+
+Options, cheapest first:
+  1. Buy the full family (Creative Fabrica) and check whether ITS license
+     grants embedding and redistribution rights. Best value here, since CODEX
+     is the house typeface across several projects.
+  2. Ask Minimalistartstudio in writing for an embedding/distribution grant,
+     and keep the reply.
+  3. Substitute a font under the SIL Open Font License, which explicitly
+     permits bundling and redistribution.
+
+This same font file is committed in other public repos - see the note in
+Claude's project memory for the full list.
