@@ -43,6 +43,20 @@ be committed here — this repository is public.
    Credentials expire after an hour, so the value changing between calls is
    correct.
 
+## Deploy order matters
+
+Set the secrets **after** the final `wrangler deploy`, never before.
+
+`wrangler deploy` rebuilds the Worker's bindings from `wrangler.toml`, and the
+secrets are not in there (deliberately — this repo is public). They survive in
+`wrangler secret list` but stop being bound at runtime, so the Worker answers
+`{"error":"relay not configured","missing":[...]}` while the secrets appear to
+exist. `--keep-vars` does not rescue this.
+
+A `wrangler secret put` creates its own version inheriting the current code, so
+secrets-last always works. If you ever redeploy the code, re-add both secrets
+afterwards.
+
 ## Cost
 
 Cloudflare Realtime TURN bills relay egress: the free allowance is 1,000 GB,

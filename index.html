@@ -2701,7 +2701,7 @@ const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/1/O/0
 // the long-term key lives in a Cloudflare Worker (see worker/ in this repo)
 // which hands out credentials that expire in an hour. Set the deployed Worker
 // URL here. It is not a secret; the key it holds is.
-const ITB_ICE_ENDPOINT = '';   // e.g. 'https://itb-ice.<subdomain>.workers.dev'
+const ITB_ICE_ENDPOINT = 'https://ice.anarchygames.org';
 
 // Deliberately NO fallback to peer-to-peer. If the relay is unreachable,
 // online play refuses to start and says so. A "just connect directly this

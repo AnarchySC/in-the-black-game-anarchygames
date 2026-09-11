@@ -2,12 +2,21 @@ name = "itb-ice"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
 
+# Deployed on our own domain rather than workers.dev. A Worker custom domain
+# resolves to Cloudflare's edge, so this publishes nothing about the machine
+# that wrote it — unlike a self-hosted TURN box, whose hostname would have to
+# be an A record to whatever runs it.
+workers_dev = false
+routes = [
+  { pattern = "ice.anarchygames.org", custom_domain = true }
+]
+
 # Not a secret. Restricts which page the browser will accept a response for.
 # Origin headers are trivially forged by non-browser clients, so treat this as
 # hygiene, never as security — the real limits are the 1-hour credential TTL
 # and the ability to revoke via the TURN key.
 [vars]
-ALLOWED_ORIGIN = "https://anarchygames.org"
+ALLOWED_ORIGIN = "https://anarchygames.org,http://127.0.0.1:8899,http://localhost:8899"
 
 # TURN_KEY_ID and TURN_KEY_TOKEN are NOT set here on purpose.
 # They are secrets and must never enter this file or this public repo:

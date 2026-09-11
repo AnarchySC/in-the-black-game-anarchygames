@@ -1,0 +1,14 @@
+# Wrangler's local state cache. Holds the Cloudflare account id and name —
+# not credentials, but internal identifiers with no business in a public repo,
+# and generated files should not be tracked regardless.
+worker/.wrangler/
+.wrangler/
+
+# npm / npx artefacts, if wrangler is ever installed locally
+node_modules/
+
+# Local secrets for wrangler dev. Must never be committed.
+.dev.vars
+.dev.vars.*
+.env
+.env.*
