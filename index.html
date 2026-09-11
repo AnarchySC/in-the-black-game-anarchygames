@@ -395,12 +395,219 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// --- Background ---
-// The scrolling parallax images are gone. They were AI-generated, 13MB, and
-// drawn at 0.55 alpha under a further darkening overlay — a lot of weight for a
-// muted wash, and photorealistic nebulae never sat right behind 640x400
-// procedural pixel art. The starfield below carries the background now, at full
-// brightness rather than the 0.4 it was dimmed to when an image was present.
+// ============================================================
+// BACKGROUND — "Nightside", drawn entirely in code
+// ============================================================
+//
+// Replaces five AI-generated 1920x512 PNGs (13MB, ~19MB decoded) that were
+// drawn at 0.55 alpha under a darkening overlay. This is ~3.1MB of canvas
+// backing store, baked once per match.
+//
+// The whole design rests on one idea: a planet whose night side is DARKER than
+// the void, occluding a field of stars. That gives the arena scale (something
+// larger than a ship) and unambiguous depth (something in front of something
+// else) — the two things a flat starfield cannot provide no matter how many
+// dots you add.
+//
+// PALETTE LAW, and it is load-bearing. Every value below is annotated with its
+// Rec.601 luma. Two rules, both auditable by reading hex:
+//   RULE 1  no background pixel exceeds luma 116.
+//   RULE 2  nothing wider than 1px in either dimension exceeds luma 50.
+// For reference, gameplay lives at: P1 #0af = 129, P2 #f6a = 155, white 255.
+// Adding anything here means re-checking both rules.
+//
+// Everything is integer fillRect. No arc, no stroke, no gradient — an
+// antialiased limb reads as a JPEG seam at 1x and kills the effect.
+
+const VOID_BASE   = '#060610'; // 7.1
+const PLANET_NIGHT= '#04040a'; // 4.7  — darker than the void, on purpose
+const TERMINATOR  = '#131120'; // 19.3 — brightest multi-pixel element there is
+const RIM_RAMPS = [
+  ['#8a6e4e', '#5e4d3c', '#3a3140', '#221e30'], // sodium: 114.7 80.1 53.4 33.2
+  ['#8a5a46', '#5e4038', '#3a2c38', '#221c2a'], // rust:   102.1 72.1 49.6 31.4
+];
+const CLOUD_BANDS = [
+  { off: 22, h: 2, c: '#0a0813' },
+  { off: 38, h: 1, c: '#08070f' },
+  { off: 51, h: 2, c: '#0a0813' },
+  { off: 64, h: 1, c: '#09080f' },
+];
+// Both geometries are chosen so the disc edge exits the bottom of the frame in
+// open field rather than behind a ship. Ships are fixed at x 40..58 and
+// 582..600 (only their height grows), and both of these clear those columns by
+// 39px or more.
+const PLANET_GEOMETRIES = [
+  { cx: 320, cy: 560, r: 260 }, // low orbit  — peak y=300, exits at x=115/525
+  { cx: 320, cy: 520, r: 190 }, // high orbit — peak y=330, exits at x=173/467
+];
+const DITH4 = [0, 2, 1, 3]; // ordered dither for the rim ramp
+
+const FAR_W = 1280;
+const FAR_DRIFT = 2.5;  // native px/s. The slowest rung of the parallax ladder.
+let bgFar = null;
+let bgPlanet = null;
+let farX = 0;
+// Column heights of the planet silhouette, for star occlusion. 9999 = no
+// planet in this column, so the guard is inert before the first bake.
+let planetTops = new Int16Array(640).fill(9999);
+
+function makeLayer(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const x = c.getContext('2d');
+  x.imageSmoothingEnabled = false;
+  return { canvas: c, ctx: x };
+}
+
+// The deep field. 170 stars in four hard tiers, with the density envelope
+// weighted toward the top of the frame — that keeps the brightest points away
+// from the planet and away from the bottom third, where the shield orb (the
+// dimmest gameplay element) spends much of its life.
+function bakeFarField() {
+  const layer = makeLayer(FAR_W, NATIVE_H);
+  const c = layer.ctx;
+  c.fillStyle = VOID_BASE;
+  c.fillRect(0, 0, FAR_W, NATIVE_H);
+
+  const bright = []; // tier 3/4 positions, kept apart from each other
+  const tiers = [
+    { n: 112, color: '#1a1a28', big: false }, // 27.6
+    { n: 36,  color: '#2e2e42', big: false }, // 48.3
+    { n: 20,  color: '#454560', big: false }, // 72.1
+    { n: 2,   color: '#6a6a88', big: true  }, // 109.4
+  ];
+
+  for (let t = 0; t < tiers.length; t++) {
+    const tier = tiers[t];
+    const topOnly = t >= 2;
+    for (let i = 0; i < tier.n; i++) {
+      let sx = 0, sy = 0, ok = false;
+      for (let tries = 0; tries < 40 && !ok; tries++) {
+        sx = Math.floor(Math.random() * FAR_W);
+        sy = Math.floor(Math.random() * (topOnly ? 160 : NATIVE_H));
+        const p = sy < 160 ? 1.0 : (sy < 300 ? 0.60 : 0.20);
+        if (Math.random() > p) continue;
+        if (topOnly) {
+          let clash = false;
+          for (const b of bright) {
+            if (Math.abs(b.x - sx) < 48 && Math.abs(b.y - sy) < 48) { clash = true; break; }
+          }
+          if (clash) continue;
+        }
+        ok = true;
+      }
+      if (topOnly) bright.push({ x: sx, y: sy });
+
+      if (tier.big) {
+        // 3x3 plus. Clamp so a wrap never lops an arm off.
+        sx = Math.max(2, Math.min(FAR_W - 3, sx));
+        sy = Math.max(2, Math.min(NATIVE_H - 3, sy));
+        c.fillStyle = '#2e2e42';
+        c.fillRect(sx - 1, sy, 3, 1);
+        c.fillRect(sx, sy - 1, 1, 3);
+        c.fillStyle = tier.color;
+        c.fillRect(sx, sy, 1, 1);
+      } else {
+        c.fillStyle = tier.color;
+        c.fillRect(sx, sy, 1, 1);
+      }
+    }
+  }
+  return layer.canvas;
+}
+
+// The planet. Column-by-column so every edge lands on the pixel grid.
+function bakePlanet(geo, ramp) {
+  const layer = makeLayer(NATIVE_W, NATIVE_H);
+  const c = layer.ctx;
+  const tops = new Int16Array(NATIVE_W).fill(9999);
+  const halfW = Math.sqrt(Math.max(1, geo.r * geo.r - (geo.cy - NATIVE_H) * (geo.cy - NATIVE_H)));
+
+  for (let x = 0; x < NATIVE_W; x++) {
+    const dx = x - geo.cx;
+    const under = geo.r * geo.r - dx * dx;
+    if (under <= 0) continue;
+    const yt = Math.round(geo.cy - Math.sqrt(under));
+    if (yt >= NATIVE_H) continue;
+    tops[x] = yt;
+
+    // Dithered 4-step rim. Light is directly overhead and symmetric, so
+    // neither player gets the lit side.
+    const u = 1 - Math.min(1, Math.abs(dx) / halfW);
+    const f = (1 - u) * 3;
+    let i = Math.floor(f);
+    if ((f - i) * 4 > DITH4[x & 3]) i++;
+    i = Math.max(0, Math.min(3, i));
+
+    if (yt + 3 < NATIVE_H) {
+      c.fillStyle = PLANET_NIGHT;
+      c.fillRect(x, yt + 3, 1, NATIVE_H - (yt + 3));
+    }
+    c.fillStyle = TERMINATOR;
+    c.fillRect(x, yt + 1, 1, 2);
+    c.fillStyle = ramp[i];
+    c.fillRect(x, yt, 1, 1);
+  }
+
+  // Cloud bands follow the limb rather than running horizontally, and stop
+  // short of the steep edge so they don't crawl up it.
+  for (const band of CLOUD_BANDS) {
+    c.fillStyle = band.c;
+    for (let x = 0; x < NATIVE_W; x++) {
+      if (tops[x] === 9999) continue;
+      if (Math.abs(x - geo.cx) >= 0.82 * halfW) continue;
+      const y = tops[x] + band.off;
+      if (y >= NATIVE_H) continue;
+      c.fillRect(x, y, 1, Math.min(band.h, NATIVE_H - y));
+    }
+  }
+
+  return { canvas: layer.canvas, tops: tops };
+}
+
+// Foreground dust. The cheapest layer, and the one that actually sells the
+// parallax — without it the 2.5 px/s deep field has nothing to be slow
+// against. Leftward and horizontal only: bullets cross at 320 px/s fully
+// saturated, so slow one-way motion can never be misread as one.
+const dust = [];
+function initDust() {
+  dust.length = 0;
+  for (let i = 0; i < 16; i++) {
+    const fast = i >= 13;
+    dust.push({
+      x: Math.random() * NATIVE_W,
+      y: Math.random() * NATIVE_H,
+      len: fast ? 4 + Math.floor(Math.random() * 2) : 2 + Math.floor(Math.random() * 2),
+      speed: fast ? 82 + Math.random() * 14 : 52 + Math.random() * 22,
+      color: fast ? '#333a52' : '#20242e', // 58.6 / 35.9
+    });
+  }
+}
+initDust();
+
+function drawDust(dt) {
+  for (const d of dust) {
+    d.x -= d.speed * dt;
+    if (d.x < -d.len) {
+      d.x = NATIVE_W + d.len;
+      d.y = Math.random() * NATIVE_H; // one re-roll per wrap, ~every 8s
+    }
+    px(d.x, d.y, d.len, 1, d.color);
+  }
+}
+
+// Re-baked at MATCH start only. ~4100 fillRects is a 4-8ms hitch, invisible
+// behind the 2s countdown and unacceptable between points — so this must never
+// be called from resetRound().
+function reseedBackground() {
+  bgFar = bakeFarField();
+  const geo = PLANET_GEOMETRIES[Math.floor(Math.random() * PLANET_GEOMETRIES.length)];
+  const ramp = RIM_RAMPS[Math.floor(Math.random() * RIM_RAMPS.length)];
+  const baked = bakePlanet(geo, ramp);
+  bgPlanet = baked.canvas;
+  planetTops = baked.tops;
+  farX = 0;
+}
 
 // --- Audio System ---
 const MUSIC_TRACKS = [
@@ -1035,7 +1242,7 @@ for (let i = 0; i < 80; i++) {
     // star rendered at luma 181 — brighter than P1 cyan (129) and P2 pink
     // (155), making the background the most luminous thing on screen.
     brightness: Math.random() * 0.30 + 0.12,
-    speed: Math.random() * 10 + 5,
+    speed: Math.random() * 12 + 8,   // 8-20, separated from the 2.5 deep field
     size: Math.random() > 0.8 ? 2 : 1
   });
 }
@@ -1044,6 +1251,11 @@ function drawStarfield(dt) {
   for (const s of stars) {
     s.x -= s.speed * dt;
     if (s.x < 0) { s.x = NATIVE_W; s.y = Math.random() * NATIVE_H; }
+    // Occlusion. Without this these 80 stars fly through a solid planet while
+    // the 170 baked ones stop at its limb, which reads as a bug rather than as
+    // two depths.
+    const tx = s.x | 0;
+    if (tx >= 0 && tx < NATIVE_W && s.y >= planetTops[tx]) continue;
     const b = Math.round(s.brightness * 255);
     px(s.x, s.y, s.size, s.size, `rgb(${b},${b},${b + 30})`);
   }
@@ -1153,6 +1365,7 @@ function resetRound() {
 }
 
 function resetMatch() {
+  reseedBackground();
   // Randomize ship variants for each tier for each player
   for (let p = 0; p < 2; p++) {
     for (let t = 0; t < 10; t++) {
@@ -2135,9 +2348,26 @@ function draw(dt) {
     shakeY = (Math.random() - 0.5) * 2 * mag;
   }
 
-  // Background — starfield over the void
-  px(0, 0, NATIVE_W, NATIVE_H, '#060610');
+  // Background — deep field, planet, mid stars, dust
+  if (!bgFar) px(0, 0, NATIVE_W, NATIVE_H, VOID_BASE);
+
+  if (bgFar) {
+    farX = (farX + FAR_DRIFT * dt) % FAR_W;
+    // Device-pixel motion. scale is an integer and the destination width is an
+    // exact integer multiple of the source, so every source pixel still maps to
+    // exactly `scale` device columns — no shimmer. Quantising to whole native
+    // pixels instead would make the field hop 1px every 400ms.
+    const dw = FAR_W * scale;
+    let dx = -Math.round(farX * scale);
+    while (dx < canvas.width) {
+      ctx.drawImage(bgFar, dx, 0, dw, canvas.height);
+      dx += dw;
+    }
+  }
+  if (bgPlanet) ctx.drawImage(bgPlanet, 0, 0, canvas.width, canvas.height);
+
   drawStarfield(dt);
+  drawDust(dt);
 
   for (let y = 0; y < NATIVE_H; y += 8) {
     px(NATIVE_W / 2, y, 1, 4, '#1a1a2e');
