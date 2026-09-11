@@ -54,9 +54,10 @@ export default {
 
     const data = await upstream.json();
 
-    // Cloudflare returns iceServers as a SINGLE object with a urls array.
-    // RTCPeerConnection wants a sequence, so normalise to an array here
-    // rather than making the game guess.
+    // Cloudflare's docs show iceServers already as an array of one object
+    // carrying a urls array, which is the shape RTCPeerConnection wants. The
+    // Array.isArray guard below stays anyway: it costs nothing and it means a
+    // bare object would still work if the response shape ever changes.
     let iceServers = data && data.iceServers;
     if (!iceServers) return json({ error: 'relay provider returned no ICE servers' }, 502, cors);
     if (!Array.isArray(iceServers)) iceServers = [iceServers];
