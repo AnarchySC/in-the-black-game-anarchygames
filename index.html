@@ -2440,44 +2440,57 @@ function showDisconnect(reason) {
 
 const ROOM_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no I/1/O/0
 
-// PeerJS 1.5.4 ships ICE defaults that no longer work: its built-in relays
-// eu-0.turn.peerjs.com / us-0.turn.peerjs.com stopped resolving entirely
-// (NXDOMAIN on every resolver), which left one STUN server as the only
-// option. STUN alone can only introduce two peers that are both directly
-// reachable — behind CGNAT, symmetric NAT, mobile data or a locked-down
-// office network, the two sides can never meet and the connection simply
-// never opens. That is the "not connecting" case.
+// ============================================================
+// ICE / RELAY  — players must never learn each other's IP
+// ============================================================
 //
-// Fixing it properly needs a TURN relay, and there is no longer a public one
-// that works without credentials (metered.ca's old open-relay creds now
-// answer TURN allocate with a 400). Drop a relay in here and cross-NAT play
-// starts working; leave it empty and play still works whenever the two peers
-// can see each other directly.
+// WebRTC normally connects the two browsers DIRECTLY, which means each side
+// learns the other's address: ICE candidates carry the peer's LAN address and
+// public IP, and that is the whole mechanism, not a setting. The fix is to
+// refuse direct routes and force every packet through a relay, so the only
+// address either player ever sees belongs to the relay.
 //
-//   { urls: 'turn:relay.example.org:3478', username: '...', credential: '...' }
+// That is what iceTransportPolicy:'relay' below does. It is load-bearing: drop
+// it and the leak comes straight back even with a TURN server configured.
 //
-// Do NOT self-host the relay on a home connection. TURN cannot be put behind
-// a proxy that hides the origin, so its hostname has to be a direct A record
-// to whatever runs it — publishing a home IP in DNS, where passive-DNS
-// archives keep it permanently even after the record is deleted. A relay
-// belongs on hosting whose public IP is not yours.
-//
-// Dead entries are worse than none — every one adds seconds to ICE gathering
-// on every single connection — so keep this list real.
-const ITB_TURN = [];
+// A relay needs credentials, and this page is public — anyone can read it. So
+// the long-term key lives in a Cloudflare Worker (see worker/ in this repo)
+// which hands out credentials that expire in an hour. Set the deployed Worker
+// URL here. It is not a secret; the key it holds is.
+const ITB_ICE_ENDPOINT = '';   // e.g. 'https://itb-ice.<subdomain>.workers.dev'
 
-const PEER_OPTS = {
-  debug: 0,
-  config: {
-    iceServers: [
-      { urls: 'stun:stun.l.google.com:19302' },
-      { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'stun:stun.cloudflare.com:3478' },
-      ...ITB_TURN,
-    ],
-    iceCandidatePoolSize: 4,
-  },
-};
+// Deliberately NO fallback to peer-to-peer. If the relay is unreachable,
+// online play refuses to start and says so. A "just connect directly this
+// once" path would silently undo the privacy guarantee at exactly the moment
+// nobody is watching, which is the whole reason this code exists.
+async function getPeerOpts() {
+  if (!ITB_ICE_ENDPOINT) {
+    throw new Error('Online play is not configured yet (no relay endpoint set).');
+  }
+  let iceServers;
+  try {
+    const res = await fetch(ITB_ICE_ENDPOINT, { cache: 'no-store' });
+    if (!res.ok) throw new Error('relay endpoint returned ' + res.status);
+    const data = await res.json();
+    iceServers = (data && data.iceServers) || data;
+    if (!Array.isArray(iceServers) || !iceServers.length) {
+      throw new Error('relay endpoint returned no ICE servers');
+    }
+  } catch (err) {
+    throw new Error('Could not reach the relay. ' + (err && err.message ? err.message : ''));
+  }
+  return {
+    debug: 0,
+    config: {
+      iceServers,
+      // Only relay candidates are gathered. No host, no srflx, no direct path.
+      iceTransportPolicy: 'relay',
+      // 0, not 4: pre-gathering would burn a TURN allocation (and relay quota)
+      // on every peer constructed, before anyone has tried to connect.
+      iceCandidatePoolSize: 0,
+    },
+  };
+}
 
 // Unordered channel. It was reliable+ordered, which is wrong for a 45Hz state
 // stream: one lost packet blocks every newer one behind it (head-of-line
@@ -2547,9 +2560,7 @@ function watchIceFailure(conn) {
     }
     pc.addEventListener('iceconnectionstatechange', () => {
       if (pc.iceConnectionState !== 'failed') return;
-      const msg = ITB_TURN.length
-        ? 'No route to the other player — the relay failed too.'
-        : 'No route to the other player. This network needs a TURN relay (see ITB_TURN).';
+      const msg = 'Relay could not carry the connection. Try again.';
       if (net.connected) {
         net.connected = false;
         showDisconnect(msg);
@@ -2636,13 +2647,24 @@ function enterClientMatch() {
 }
 
 // --- HOST FLOW ---
-function startHost() {
+async function startHost() {
   const code = generateRoomCode();
   net.roomCode = code;
   document.getElementById('host-code').textContent = code;
+  document.getElementById('host-status').textContent = 'Getting a relay...';
+
+  let opts;
+  try {
+    opts = await getPeerOpts();
+  } catch (err) {
+    document.getElementById('host-code').textContent = '----';
+    document.getElementById('host-status').textContent = err.message;
+    return;
+  }
+  if (net.mode !== 'local' || game.state !== 'menu') return; // cancelled while fetching
   document.getElementById('host-status').textContent = 'Waiting for opponent...';
 
-  const peer = new Peer('ITB-' + code, PEER_OPTS);
+  const peer = new Peer('ITB-' + code, opts);
   net.peer = peer;
 
   peer.on('open', () => {
@@ -2685,7 +2707,7 @@ function startHost() {
       document.getElementById('host-status').textContent = 'Room code taken. Try again.';
       setTimeout(() => {
         if (net.peer) { try { net.peer.destroy(); } catch(e) {} net.peer = null; }
-        startHost();
+        startHost();   // async; its own error path reports failures
       }, 1000);
     } else if (err.type === 'network' || err.type === 'server-error') {
       document.getElementById('host-status').textContent = 'Signaling server unreachable. Try again.';
@@ -2696,11 +2718,22 @@ function startHost() {
 }
 
 // --- CLIENT FLOW ---
-function startClient(code) {
-  document.getElementById('join-status').textContent = 'Connecting...';
+async function startClient(code) {
+  document.getElementById('join-status').textContent = 'Getting a relay...';
   document.getElementById('join-status').style.animation = 'pulse 1.5s ease-in-out infinite';
 
-  const peer = new Peer(undefined, PEER_OPTS);
+  let opts;
+  try {
+    opts = await getPeerOpts();
+  } catch (err) {
+    document.getElementById('join-status').textContent = err.message;
+    document.getElementById('join-status').style.animation = 'none';
+    return;
+  }
+  if (net.mode !== 'local' || game.state !== 'menu') return; // cancelled while fetching
+  document.getElementById('join-status').textContent = 'Connecting...';
+
+  const peer = new Peer(undefined, opts);
   net.peer = peer;
   net.roomCode = code;
   net.pendingRole = 'client';

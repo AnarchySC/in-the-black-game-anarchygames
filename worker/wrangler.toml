@@ -1,0 +1,15 @@
+name = "itb-ice"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+# Not a secret. Restricts which page the browser will accept a response for.
+# Origin headers are trivially forged by non-browser clients, so treat this as
+# hygiene, never as security — the real limits are the 1-hour credential TTL
+# and the ability to revoke via the TURN key.
+[vars]
+ALLOWED_ORIGIN = "https://anarchygames.org"
+
+# TURN_KEY_ID and TURN_KEY_TOKEN are NOT set here on purpose.
+# They are secrets and must never enter this file or this public repo:
+#   wrangler secret put TURN_KEY_ID
+#   wrangler secret put TURN_KEY_TOKEN
