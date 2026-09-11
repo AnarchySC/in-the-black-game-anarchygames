@@ -350,6 +350,7 @@ const FIRE_RATE = 3.5;
 const FIRE_INTERVAL = 1.0 / FIRE_RATE;
 const SHIP_MARGIN = 40;
 const WIN_SCORE = 10;
+const MAX_SHIP_TIER = 9;   // 10 tiers, 0-indexed; scores can exceed this
 const MAX_ROUNDS = 19; // best of 19 — first to 10 wins
 
 // --- Modifier Constants ---
@@ -900,6 +901,49 @@ function getShipColors(tier, variant) {
   return p[Math.min(tier, 9)][variant % VARIANTS_PER_TIER];
 }
 
+// Ship "auras" were originally a plain low-alpha RECTANGLE the size of the
+// ship's bounding box. That was invisible against the old AI-generated
+// background wash and became an obvious box the moment the wash was removed.
+// Chamfering the corners does not fix it either — a big dim rectangle around a
+// thin ship reads as a box whatever you do to its corners.
+//
+// So: draw an actual ellipse that hugs the ship, one horizontal bar per row,
+// with the bar width following the ellipse and the alpha falling off toward
+// the top and bottom. Elliptical silhouette plus a falloff reads as light;
+// a rectangle reads as a UI element.
+//
+// Rows step by 2 to halve the fillRect count — at integer scale that is still
+// smooth, and it keeps a pair of LEGENDARY ships well inside budget.
+function glow(dp, ctx, lx, ly, dw, dh, color, alpha) {
+  const cx = lx + dw / 2;
+  const cy = ly + dh / 2;
+  if (dw <= 0 || dh <= 0) return;
+  // Three concentric ellipses rather than one. They overlap, so alpha
+  // accumulates toward the middle — that is what produces a falloff in BOTH
+  // axes. A single pass has a hard left and right edge on every bar and reads
+  // as a filled pill; light has no edge.
+  const PASSES = [1.0, 0.62, 0.34];
+  for (let pI = 0; pI < PASSES.length; pI++) {
+    const k = PASSES[pI];
+    const rx = (dw / 2) * k;
+    const ry = (dh / 2) * k;
+    if (rx < 0.5 || ry < 0.5) continue;
+    for (let py = Math.round(cy - ry); py < cy + ry; py += 2) {
+      const ny = (py + 1 - cy) / ry;
+      const a2 = 1 - ny * ny;
+      if (a2 <= 0) continue;
+      const bw = Math.round(rx * Math.sqrt(a2) * 2);
+      if (bw <= 0) continue;
+      // Steep: the light is concentrated on the hull and gone by the edge.
+      const a = alpha * 0.42 * Math.pow(a2, 1.8);
+      if (a < 0.004) continue;
+      ctx.globalAlpha = a;
+      dp(Math.round(cx - bw / 2), py, bw, 2, color);
+    }
+  }
+  ctx.globalAlpha = 1.0;
+}
+
 // Ship draw functions: shipDrawFns[tier][variant](dp, c, hh, w, ctx)
 const shipDrawFns = [];
 
@@ -1130,9 +1174,16 @@ shipDrawFns[7] = [
     dp(5,-2,7,4,c.body); dp(13,-1,3,2,c.cockpit); // center
     dp(2,-hh,6,3,c.body); dp(2,hh-3,6,3,c.body); // outer segments
     dp(0,-1,3,2,c.engine); dp(-2,0,2,1,'#f8f');
-    ctx.globalAlpha=0.4; dp(3,-hh+3,2,hh*2-6,c.stripe); ctx.globalAlpha=1.0; // energy link
+    // Energy link between the floating segments: three columns so it reads as
+    // a beam with falloff rather than a flat bar. The full-bounds white rect
+    // that used to sit behind this was doing nothing except putting a box
+    // around the ship — at 10x42 even an elliptical glow degenerates to a slab,
+    // so it is gone rather than softened.
+    ctx.globalAlpha=0.16; dp(2,-hh+3,1,hh*2-6,c.stripe);
+    ctx.globalAlpha=0.5;  dp(3,-hh+3,2,hh*2-6,c.stripe);
+    ctx.globalAlpha=0.16; dp(5,-hh+3,1,hh*2-6,c.stripe);
+    ctx.globalAlpha=1.0;
     dp(5,-hh+2,8,1,c.stripe); dp(5,hh-3,8,1,c.stripe);
-    ctx.globalAlpha=0.2; dp(2,-hh,10,hh*2,'#fff'); ctx.globalAlpha=1.0;
   },
 ];
 
@@ -1140,7 +1191,7 @@ shipDrawFns[7] = [
 shipDrawFns[8] = [
   // V0: double-delta wings, golden accents, faint aura
   (dp, c, hh, w, ctx) => {
-    ctx.globalAlpha=0.08; dp(-4,-hh-3,w+8,hh*2+6,c.engine); ctx.globalAlpha=1.0;
+    glow(dp,ctx,-4,-hh-3,w+8,hh*2+6,c.engine,0.08);
     dp(2,-6,12,12,c.body); dp(12,-3,4,6,c.body); dp(14,-1,3,2,c.cockpit);
     dp(2,-hh+1,10,2,c.wing); dp(2,hh-3,10,2,c.wing);
     dp(0,-hh-1,7,2,c.wing); dp(0,hh-1,7,2,c.wing);
@@ -1149,7 +1200,7 @@ shipDrawFns[8] = [
   },
   // V1: tri-wing angelic, halo glow
   (dp, c, hh, w, ctx) => {
-    ctx.globalAlpha=0.1; dp(-2,-hh-2,w+4,hh*2+4,c.engine); ctx.globalAlpha=1.0;
+    glow(dp,ctx,-2,-hh-2,w+4,hh*2+4,c.engine,0.1);
     dp(3,-4,10,8,c.body); dp(13,-2,4,4,c.cockpit);
     dp(0,-hh,10,2,c.wing); dp(0,hh-2,10,2,c.wing);
     dp(4,-hh+2,8,2,c.wing); dp(4,hh-4,8,2,c.wing); // mid wings
@@ -1159,7 +1210,7 @@ shipDrawFns[8] = [
   },
   // V2: ring structure, central crystal
   (dp, c, hh, w, ctx) => {
-    ctx.globalAlpha=0.08; dp(-3,-hh-2,w+6,hh*2+4,c.engine); ctx.globalAlpha=1.0;
+    glow(dp,ctx,-3,-hh-2,w+6,hh*2+4,c.engine,0.08);
     dp(6,-3,6,6,c.body); dp(12,-1,4,2,c.cockpit); // crystal core
     dp(1,-hh,12,2,c.wing); dp(1,hh-2,12,2,c.wing);
     dp(-1,-hh+2,4,hh*2-4,c.wing); // ring sides
@@ -1173,8 +1224,8 @@ shipDrawFns[8] = [
 shipDrawFns[9] = [
   // V0: golden, radiant aura, elaborate multi-wing, engine array
   (dp, c, hh, w, ctx) => {
-    ctx.globalAlpha=0.06; dp(-6,-hh-4,w+12,hh*2+8,'#ff0');
-    ctx.globalAlpha=0.12; dp(-3,-hh-2,w+6,hh*2+4,'#fa0'); ctx.globalAlpha=1.0;
+    glow(dp,ctx,-6,-hh-4,w+12,hh*2+8,'#ff0',0.06);
+    glow(dp,ctx,-3,-hh-2,w+6,hh*2+4,'#fa0',0.12);
     dp(1,-6,14,12,c.body); dp(13,-3,4,6,c.body); dp(15,-1,3,2,c.cockpit);
     dp(-2,-hh,14,3,c.wing); dp(-2,hh-3,14,3,c.wing);
     dp(-2,-hh-2,5,2,c.stripe); dp(-2,hh,5,2,c.stripe);
@@ -1185,8 +1236,8 @@ shipDrawFns[9] = [
   },
   // V1: phoenix form, trailing fire wings
   (dp, c, hh, w, ctx) => {
-    ctx.globalAlpha=0.06; dp(-8,-hh-4,w+16,hh*2+8,'#f80');
-    ctx.globalAlpha=0.12; dp(-4,-hh-2,w+8,hh*2+4,'#fa0'); ctx.globalAlpha=1.0;
+    glow(dp,ctx,-8,-hh-4,w+16,hh*2+8,'#f80',0.06);
+    glow(dp,ctx,-4,-hh-2,w+8,hh*2+4,'#fa0',0.12);
     dp(3,-5,11,10,c.body); dp(14,-2,3,4,c.cockpit);
     dp(-3,-hh,14,3,c.wing); dp(-3,hh-3,14,3,c.wing);
     // Fire trail on wings
@@ -1202,8 +1253,8 @@ shipDrawFns[9] = [
   // V2: void lord, dark core with brilliant corona
   (dp, c, hh, w, ctx) => {
     // Brilliant corona
-    ctx.globalAlpha=0.08; dp(-6,-hh-4,w+12,hh*2+8,'#fff');
-    ctx.globalAlpha=0.15; dp(-3,-hh-2,w+6,hh*2+4,c.stripe); ctx.globalAlpha=1.0;
+    glow(dp,ctx,-6,-hh-4,w+12,hh*2+8,'#fff',0.08);
+    glow(dp,ctx,-3,-hh-2,w+6,hh*2+4,c.stripe,0.15);
     dp(2,-6,12,12,'#112'); dp(3,-5,10,10,'#223'); // dark core
     dp(14,-2,3,4,c.cockpit);
     dp(-1,-hh,13,2,c.wing); dp(-1,hh-2,13,2,c.wing);
@@ -1218,7 +1269,9 @@ shipDrawFns[9] = [
 function drawShip(x, y, w, h, facingRight, tier, variant, flash) {
   if (flash) return;
 
-  const v = variant % VARIANTS_PER_TIER;
+  // Number.isFinite guard, not `|| 0`: an undefined variant yields NaN here,
+  // and shipDrawFns[t][NaN] is undefined, which used to throw mid-render.
+  const v = (Number.isFinite(variant) ? variant : 0) % VARIANTS_PER_TIER;
   const c = getShipColors(tier, v);
   const cy = y + h / 2;
   const hh = Math.floor(h / 2);
@@ -2387,8 +2440,13 @@ function draw(dt) {
   drawBlackHole();
 
   // Ships
-  if (p1) drawShip(p1.x, p1.y, p1.w, p1.h, true, game.scores[0], game.shipVariants[0][game.scores[0]], game.flashTimers[0] > 0);
-  if (p2) drawShip(p2.x, p2.y, p2.w, p2.h, false, game.scores[1], game.shipVariants[1][game.scores[1]], game.flashTimers[1] > 0);
+  // Scores run 0..WIN_SCORE (10) but there are only 10 ship tiers, so the
+  // variant tables are indexed 0..9. Clamp, or the winning point reads
+  // shipVariants[p][10] === undefined.
+  const t1 = Math.min(game.scores[0], MAX_SHIP_TIER);
+  const t2 = Math.min(game.scores[1], MAX_SHIP_TIER);
+  if (p1) drawShip(p1.x, p1.y, p1.w, p1.h, true, t1, game.shipVariants[0][t1], game.flashTimers[0] > 0);
+  if (p2) drawShip(p2.x, p2.y, p2.w, p2.h, false, t2, game.shipVariants[1][t2], game.flashTimers[1] > 0);
 
   // Shield orb
   if (shield) {
@@ -3319,7 +3377,17 @@ function loop(time) {
   }
   updateThrusters(dt);
 
-  draw(dt);
+  // draw() used to sit unguarded in front of the reschedule, so a single
+  // render exception killed the animation loop for good — the game froze and
+  // never recovered. One bad frame should cost one frame.
+  try {
+    draw(dt);
+  } catch (err) {
+    if (!loop._drawErr) {
+      loop._drawErr = true;
+      console.error('draw() threw; continuing:', err && err.message ? err.message : err);
+    }
+  }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame((t) => { lastTime = t; requestAnimationFrame(loop); });
