@@ -395,25 +395,12 @@ function resize() {
 window.addEventListener('resize', resize);
 resize();
 
-// --- Background Sprites (randomly selected per match, scrolling) ---
-const bgImages = [];
-const BG_PATHS = [
-  'assets/backgrounds/itb_bg_cosmos1.png',
-  'assets/backgrounds/itb_bg_cosmos2.png',
-  'assets/backgrounds/itb_bg_cosmos3.png',
-  'assets/backgrounds/itb_bg_cosmos4.png',
-  'assets/backgrounds/itb_bg_cosmos5.png',
-];
-(function() {
-  for (const path of BG_PATHS) {
-    const img = new Image();
-    img.src = path;
-    bgImages.push(img);
-  }
-})();
-let activeBg = null;
-let bgScrollX = 0;
-const BG_SCROLL_SPEED = 6; // pixels per second
+// --- Background ---
+// The scrolling parallax images are gone. They were AI-generated, 13MB, and
+// drawn at 0.55 alpha under a further darkening overlay — a lot of weight for a
+// muted wash, and photorealistic nebulae never sat right behind 640x400
+// procedural pixel art. The starfield below carries the background now, at full
+// brightness rather than the 0.4 it was dimmed to when an image was present.
 
 // --- Audio System ---
 const MUSIC_TRACKS = [
@@ -1043,7 +1030,11 @@ for (let i = 0; i < 80; i++) {
   stars.push({
     x: Math.random() * NATIVE_W,
     y: Math.random() * NATIVE_H,
-    brightness: Math.random() * 0.5 + 0.2,
+    // 0.12-0.42, not 0.2-0.7. With the background image gone the starfield
+    // draws at full alpha instead of 0.4, and at the old range its brightest
+    // star rendered at luma 181 — brighter than P1 cyan (129) and P2 pink
+    // (155), making the background the most luminous thing on screen.
+    brightness: Math.random() * 0.30 + 0.12,
     speed: Math.random() * 10 + 5,
     size: Math.random() > 0.8 ? 2 : 1
   });
@@ -1162,11 +1153,6 @@ function resetRound() {
 }
 
 function resetMatch() {
-  // Pick a random background for this match
-  const ready = bgImages.filter(img => img.complete && img.naturalWidth > 0);
-  activeBg = ready.length > 0 ? ready[Math.floor(Math.random() * ready.length)] : null;
-  bgScrollX = 0;
-
   // Randomize ship variants for each tier for each player
   for (let p = 0; p < 2; p++) {
     for (let t = 0; t < 10; t++) {
@@ -2149,39 +2135,9 @@ function draw(dt) {
     shakeY = (Math.random() - 0.5) * 2 * mag;
   }
 
-  // Background — scrolling parallax image + starfield
+  // Background — starfield over the void
   px(0, 0, NATIVE_W, NATIVE_H, '#060610');
-
-  if (activeBg) {
-    bgScrollX = (bgScrollX + BG_SCROLL_SPEED * dt) % activeBg.naturalWidth;
-    const cw = canvas.width;
-    const ch = canvas.height;
-    const iw = activeBg.naturalWidth;
-    const ih = activeBg.naturalHeight;
-
-    // Scale background to fill canvas height, maintain aspect ratio
-    const bgScale = ch / ih;
-    const drawW = iw * bgScale;
-
-    // Draw tiled copies for seamless scroll
-    ctx.globalAlpha = 0.55;
-    const offsetPx = bgScrollX * bgScale;
-    let startX = -offsetPx;
-    while (startX < cw) {
-      ctx.drawImage(activeBg, startX, 0, drawW, ch);
-      startX += drawW;
-    }
-    ctx.globalAlpha = 1.0;
-
-    // Darken overlay so game elements pop
-    ctx.fillStyle = 'rgba(0, 0, 8, 0.2)';
-    ctx.fillRect(0, 0, cw, ch);
-  }
-
-  // Starfield on top for parallax depth
-  ctx.globalAlpha = activeBg ? 0.4 : 1.0;
   drawStarfield(dt);
-  ctx.globalAlpha = 1.0;
 
   for (let y = 0; y < NATIVE_H; y += 8) {
     px(NATIVE_W / 2, y, 1, 4, '#1a1a2e');
