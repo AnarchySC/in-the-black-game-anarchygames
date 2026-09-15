@@ -1570,6 +1570,26 @@ touchFireBtn.addEventListener('touchcancel', (e) => {
   }
 });
 
+// The vertical pull a black hole applies to one player over dt.
+//
+// This lives in one place on purpose. It used to be inline in update(), which
+// only the HOST calls — the client's own-ship prediction never applied it, so
+// during a black hole the host dragged the client's ship across the arena at
+// 40-180 px/s for 12-20s while the client's screen kept drawing it where it
+// started. The client watched shots miss a ship that, on the host, was
+// somewhere else entirely and dying. Any future force that moves a player must
+// be shared the same way or it reintroduces exactly this bug.
+function applyBlackHolePull(p, bh, dt) {
+  if (!p || !bh) return;
+  const pcy = p.y + p.h / 2;
+  const dy = bh.y - pcy;
+  const dist = Math.abs(dy);
+  if (dist <= 2) return;
+  const pull = bh.pullStrength * Math.sign(dy) * Math.min(1, 200 / (dist + 50));
+  p.y += pull * dt;
+  p.y = Math.max(0, Math.min(NATIVE_H - p.h, p.y));
+}
+
 // --- Collision ---
 function aabb(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
@@ -1757,17 +1777,7 @@ function updateModifiers(dt) {
         bh.angle += dt * 2.5;
 
         // Pull players vertically toward the black hole
-        for (const p of [game.p1, game.p2]) {
-          if (!p) continue;
-          const pcy = p.y + p.h / 2;
-          const dy = bh.y - pcy;
-          const dist = Math.abs(dy);
-          if (dist > 2) {
-            const pull = bh.pullStrength * Math.sign(dy) * Math.min(1, 200 / (dist + 50));
-            p.y += pull * dt;
-            p.y = Math.max(0, Math.min(NATIVE_H - p.h, p.y));
-          }
-        }
+        for (const p of [game.p1, game.p2]) applyBlackHolePull(p, bh, dt);
 
         // Bend bullet trajectories
         for (const b of game.bullets) {
@@ -3329,10 +3339,36 @@ function loop(time) {
           const speedMult = getEffectiveSpeedMultiplier();
           game.p2.y += p2Move * SHIP_SPEED * speedMult * dt;
           game.p2.y = Math.max(0, Math.min(NATIVE_H - game.p2.h, game.p2.y));
-          game.p2._targetY = game.p2.y; // override target so interpolation doesn't fight prediction
-        } else if (game.p2._targetY !== undefined) {
-          // Only correct toward host when not actively moving
-          game.p2.y = smooth(game.p2.y, game.p2._targetY, 10, dt);
+        }
+      }
+
+      // Outside the touch/keyboard split on purpose: the host applies these to
+      // every player regardless of how they steer, so the prediction has to as
+      // well, or a touch player desyncs exactly like a keyboard one did.
+
+      // Predict every force the host applies, not just our own input. Missing
+      // one is not cosmetic: the host's collisions are authoritative, so an
+      // unpredicted force means dying to shots that look like clean misses on
+      // this screen.
+      applyBlackHolePull(game.p2, game.modifiers.blackHole, dt);
+
+      // Reconcile toward the host ALWAYS. This used to run only while no
+      // movement key was held, and the prediction overwrote _targetY the rest
+      // of the time — so divergence had nothing pulling it back and grew
+      // without bound for as long as the player kept moving.
+      //
+      // Inside the error one-way latency can explain, trust the prediction;
+      // correcting there would only make our own ship feel sluggish. Beyond it
+      // something is genuinely wrong, so converge — and past 80px the two
+      // simulations disagree about which half of the arena we are in, where a
+      // visible snap beats dying to an invisible ship.
+      if (game.p2._targetY !== undefined) {
+        const mag = Math.abs(game.p2._targetY - game.p2.y);
+        const budget = Math.min(60, (net.latency / 1000) * SHIP_SPEED * 2 + 8);
+        if (mag > 80) {
+          game.p2.y = game.p2._targetY;
+        } else if (mag > budget) {
+          game.p2.y = smooth(game.p2.y, game.p2._targetY, 12, dt);
         }
       }
     }
