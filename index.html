@@ -753,6 +753,18 @@ function stopMusic() {
   audio.music.currentTime = 0;
 }
 
+// The client's own gun, played the instant the trigger is pulled.
+//
+// It used to be heard only when the host's snapshot echoed the bullet back —
+// a full round trip plus snapshot age, ~111ms at 100ms RTT. That is long
+// enough that a player cannot build a timing rhythm against their own weapon,
+// which is what turns "I am losing" into "I am not playing". The host has
+// always heard its own gun immediately, from fireBullet().
+function playOwnGunLocally() {
+  if (net.mode !== 'client') return;   // host and local play already sound on fire
+  playPhaser(1);                        // the client always drives P2
+}
+
 function playPhaser(playerId) {
   if (!audio.unlocked) return;
   const vol = audio.sfxVolume * 0.25; // keep phaser subtle
@@ -1451,7 +1463,7 @@ document.addEventListener('keydown', (e) => {
   switch (e.code) {
     case 'KeyW': input.p1Up = true; break;
     case 'KeyS': input.p1Down = true; break;
-    case 'Space': e.preventDefault(); input.p1Fire = true; input.p1FireOnce = true; input.p1FireCount++; break;
+    case 'Space': e.preventDefault(); input.p1Fire = true; input.p1FireOnce = true; input.p1FireCount++; playOwnGunLocally(); break;
     case 'ArrowUp': e.preventDefault(); if (net.mode === 'local') input.p2Up = true; break;
     case 'ArrowDown': e.preventDefault(); if (net.mode === 'local') input.p2Down = true; break;
     case 'Enter': if (net.mode === 'local') { input.p2Fire = true; input.p2FireOnce = true; } break;
@@ -1474,7 +1486,7 @@ canvas.addEventListener('wheel', (e) => {
 }, { passive: false });
 
 canvas.addEventListener('mousedown', (e) => {
-  if (e.button === 0) { input.p1Fire = true; input.p1FireOnce = true; input.p1FireCount++; }
+  if (e.button === 0) { input.p1Fire = true; input.p1FireOnce = true; input.p1FireCount++; playOwnGunLocally(); }
 });
 canvas.addEventListener('mouseup', (e) => {
   if (e.button === 0) { input.p1Fire = false; }
@@ -1545,6 +1557,7 @@ touchFireBtn.addEventListener('touchstart', (e) => {
       input.p1Fire = true;
       input.p1FireOnce = true;
       input.p1FireCount++;
+      playOwnGunLocally();
       touchFireBtn.classList.add('active');
     }
   }
@@ -1961,7 +1974,23 @@ function update(dt) {
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
-    if (b.x < -20 || b.x > NATIVE_W + 20 || b.y < -20 || b.y > NATIVE_H + 20) {
+    // Lag compensation, host's shots only. See the collision test below for
+    // why. Computed here rather than there because the cull has to know about
+    // it: culling the real bullet at the edge would delete a compensated shot
+    // before its test point ever reached the target, so at high latency the
+    // host's shots would simply stop registering.
+    let hitTarget = b;
+    if (net.mode === 'host' && b.owner === 0) {
+      const rewind = Math.min(0.25, (net.latency / 1000) * 2 + net.tickRate / 2000);
+      if (rewind > 0) {
+        hitTarget = { x: b.x - b.vx * rewind, y: b.y - b.vy * rewind, w: b.w, h: b.h };
+      }
+    }
+
+    // Cull on the compensated position, so the bullet lives until its test
+    // point has left the field too.
+    if (hitTarget.x < -20 || hitTarget.x > NATIVE_W + 20 ||
+        hitTarget.y < -20 || hitTarget.y > NATIVE_H + 20) {
       game.bullets.splice(i, 1);
       continue;
     }
@@ -1973,7 +2002,25 @@ function update(dt) {
       continue;
     }
 
-    if (b.owner === 0 && aabb(b, p2)) {
+    // Lag compensation, host's shots only.
+    //
+    // Both collision tests run on the host. The one below (b.owner === 1, the
+    // client's shot) is tested against a LIVE p1 — the host's dodge counts the
+    // instant he makes it. This one tested a live bullet against a p2 that is
+    // one one-way delay stale, because that is how old the client's input is
+    // on arrival. The client, meanwhile, does not see that bullet until a
+    // further delay has passed. Net effect: the host judged the shot against
+    // the client's ship 2 x one-way-delay before the client ever saw the
+    // bullet coming — about 20px of smear on a 28px ship at 100ms RTT, a 71%
+    // larger target, permanently, in the only mechanic that scores. There was
+    // no symmetric term anywhere.
+    //
+    // So rewind the BULLET rather than the ship: test it where it was when the
+    // client could actually have reacted to it. The cost lands on the host's
+    // screen — his bolt is sometimes drawn past the enemy before the kill
+    // registers — which is the right place for it, since the host is the one
+    // who has been winning.
+    if (b.owner === 0 && aabb(hitTarget, p2)) {
       game.bullets.splice(i, 1);
       handleHit(1);
       continue;
@@ -3173,7 +3220,11 @@ function applyState(s) {
   // Client: play phaser SFX when new bullets appear
   if (net.mode === 'client' && s.bl.length > game.bullets.length) {
     const newBullets = s.bl.slice(game.bullets.length);
-    for (let i = 0; i < Math.min(newBullets.length, 3); i++) playPhaser(newBullets[i].o);
+    // Opponent's gun only. Ours already sounded at trigger time; playing it
+    // again on the echo would double every shot we fire.
+    for (let i = 0; i < Math.min(newBullets.length, 3); i++) {
+      if (newBullets[i].o === 0) playPhaser(0);
+    }
   }
   game.bullets = s.bl.map(b => ({ x: b.x, y: b.y, w: BULLET_W, h: BULLET_H, vx: b.vx, vy: b.vy, owner: b.o }));
 
